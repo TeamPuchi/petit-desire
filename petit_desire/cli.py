@@ -15,6 +15,14 @@ import sys
 from .service import DesireService
 
 
+def _utf8_stdout() -> None:
+    # コンテナは LANG=C.UTF-8 だが、手元（Windows の cp932 等）でも欲求のバー（█）を出せるように
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
+    except (AttributeError, ValueError):
+        pass
+
+
 def _pid(argv: list[str]) -> str:
     args = [a for a in argv if not a.startswith("-")]
     return args[0] if args else os.environ.get("CHARACTER_ID", "")
@@ -23,6 +31,7 @@ def _pid(argv: list[str]) -> str:
 def update_main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.WARNING, format="[desire-updater] %(levelname)s %(message)s")
     argv = sys.argv[1:] if argv is None else argv
+    _utf8_stdout()
     svc = DesireService.from_env(_pid(argv))
     row, inputs = svc.update()
     levels = svc.levels(row)
@@ -37,6 +46,7 @@ def update_main(argv: list[str] | None = None) -> int:
 def status_main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.ERROR, format="[desire-status] %(levelname)s %(message)s")
     argv = sys.argv[1:] if argv is None else argv
+    _utf8_stdout()
     svc = DesireService.from_env(_pid(argv))
     row = svc.current(refresh_if_stale="--no-refresh" not in argv)
     print(svc.format(row, compact="--compact" in argv))
