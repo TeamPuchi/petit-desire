@@ -468,7 +468,7 @@ class TestSaveAndLoadDesires:
                 colors={"curiosity": "#aaa"},
             )
             save_desires(state, path)
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 data = json.load(f)
             assert data["labels"]["curiosity"] == "知りたい"
             assert data["colors"]["curiosity"] == "#aaa"

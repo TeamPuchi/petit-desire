@@ -12,6 +12,32 @@ M5 Petitに、時間経過とセンサー入力に基づいて変化する内的
 
 `desire_updater.py`をcronで定期実行して`desires.json`を更新し、MCPサーバー(`server.py`)がそれを読んでClaudeにツールとして提供します。
 
+## クラウド版（house 表 `STATE#DESIRES`・2026-09-26）
+
+クラウドのぷち（petit-env の petit-core コンテナ）では、`petit_desire/` パッケージが欲求エンジンの本体です。
+元の計算（下の3段階）はそのまま使い、置き場と入力をクラウドで手に入るものに差し替えています。
+
+| | 手元（元の作り） | クラウド |
+|---|---|---|
+| 欲求の置き場 | `desires.json` | house 表 `pk=P#<pid>` / `sk=STATE#DESIRES`（属性 `desires` は名前→0〜1 の Map。家 API の `GET /petits/{pid}/mood` が読む） |
+| 記憶（満たされた時刻） | memory.db をキーワード検索 | petit-memory の DynamoDB 版（`MEM#`/`PRIV#`）の新着を読み、本文は暗号シュレッダーの鍵でこのプロセスの中だけで開いてキーワードに当てる。鍵が無ければ記憶の種類（`categories`）で当てる |
+| 機体 | `/sensors` を HTTP で読む | house 表の `DEVICE#<Thing>`（battery・sleeping など）。タッチは家 API が `desires` に直接差分を足す |
+| SNS | — | sns-api の受け箱（自分の投稿への反応）→ `event_effects` |
+
+**積み上げ式**: 元は毎回ゼロから「最後に満たされてからの経過 ÷ satisfaction_hours」を計算していたため、
+`satisfy_desire` や家 API のタッチの差分が次の更新で消えていました。クラウド版は前回の値に経過時間ぶんを足していく形にし、
+他の書き手が動かした分（`desires` − 前回書いた値）を取り込みます。何も起きなければ元と同じ値の列になります（`petit_desire/engine.py`）。
+書き込みは `updated_at` を条件にした条件付き書き込みです。
+
+```bash
+desire-updater <id>    # 5分ごと（petit-env の cron）
+desire-status <id>     # 今の欲求を短く出す（自律行動のプロンプトに差し込む）
+desire-system          # MCP サーバー（get_desires / satisfy_desire / boost_desire。CHARACTER_ID を env で渡す）
+```
+
+環境変数の一覧は `petit_desire/service.py` の先頭。`desire_config.json` が無いキャラは `petit_desire/defaults.py` の既定（仮置き）で動きます。
+`desire_config.json` にはクラウド版で次を足せます: 欲求ごとの `categories`（記憶の種類で満たす）、全体の `event_effects`（SNS の出来事 → 効果）、`initial_level`（手がかりが無い欲求の出発点）。
+
 ## 必要環境
 
 - Python 3.10+

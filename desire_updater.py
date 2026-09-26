@@ -19,7 +19,7 @@ import sqlite3
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -43,8 +43,8 @@ MEMORY_DB_PATH = Path(os.getenv("MEMORY_DB_PATH", _default_memory_db))
 _default_desires_path = str(DATA_DIR / "characters" / CHARACTER_ID / "data" / "desires.json")
 DESIRES_PATH = Path(os.getenv("DESIRES_PATH", _default_desires_path))
 
-# 一緒にいる人の名前（miss_companion 欲求で使う）
-COMPANION_NAME = os.getenv("COMPANION_NAME", "あなた")
+# 一緒にいる人の名前（miss_companion 欲求で使う）。無ければ自律行動と同じ PETIT_USER_NAME
+COMPANION_NAME = os.getenv("COMPANION_NAME") or os.getenv("PETIT_USER_NAME") or "あなた"
 
 
 # ---------------------------------------------------------------------------
@@ -61,6 +61,8 @@ class DesireConfig:
     color: str = "#cab8d9"
     base_level: float | None = None
     time_driven: bool = True
+    # クラウド版（petit_desire.engine）: 本文を読めない記憶でも、種類（category）で満たされたと数える
+    categories: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -87,6 +89,11 @@ class DesireSystemConfig:
     sensor_effects: list[SensorEffect]
     cross_effects: list[CrossEffect]
     priority: list[str]
+    # クラウド版: SNS の受け箱に届いた出来事（comment / like / touch / snack / "*"）→ 欲求の効果。
+    # センサー効果と違い、その場限りではなく欲求そのものを動かす（触れ合いの差分と同じ扱い）
+    event_effects: dict[str, dict[str, dict[str, float]]] = field(default_factory=dict)
+    # クラウド版: 記憶にも手がかりが無い欲求の出発点（家 API の desires_store.DEFAULT_BASE と同じ 0.5）
+    initial_level: float = 0.5
 
 
 def load_desire_config(char_id: str, data_dir: Path | None = None) -> DesireSystemConfig:
@@ -98,16 +105,21 @@ def load_desire_config(char_id: str, data_dir: Path | None = None) -> DesireSyst
         raise FileNotFoundError(f"desire_config.json が見つかりません: {config_path}")
 
     raw = json.loads(config_path.read_text(encoding="utf-8"))
+    return parse_desire_config(raw)
 
+
+def parse_desire_config(raw: dict[str, Any], companion_name: str | None = None) -> DesireSystemConfig:
+    """desire_config.json の中身（dict）から設定を作る。companion_name が無ければ COMPANION_NAME。"""
+    companion = companion_name or COMPANION_NAME
     desires: dict[str, DesireConfig] = {}
     for desire_id, d in raw.get("desires", {}).items():
         keywords = list(d.get("keywords", []))
         # miss_companion のキーワードを COMPANION_NAME から自動生成
         if desire_id == "miss_companion" and not keywords:
             keywords = [
-                f"{COMPANION_NAME}と話した", f"{COMPANION_NAME}に伝えた",
-                f"{COMPANION_NAME}と会話", f"{COMPANION_NAME}と話す",
-                f"{COMPANION_NAME}が来た", f"{COMPANION_NAME}がいた",
+                f"{companion}と話した", f"{companion}に伝えた",
+                f"{companion}と会話", f"{companion}と話す",
+                f"{companion}が来た", f"{companion}がいた",
             ]
         desires[desire_id] = DesireConfig(
             name_ja=d["name_ja"],
@@ -117,6 +129,7 @@ def load_desire_config(char_id: str, data_dir: Path | None = None) -> DesireSyst
             color=d.get("color", "#cab8d9"),
             base_level=d.get("base_level"),
             time_driven=d.get("time_driven", True),
+            categories=list(d.get("categories", [])),
         )
 
     sensor_effects = [
@@ -145,6 +158,8 @@ def load_desire_config(char_id: str, data_dir: Path | None = None) -> DesireSyst
         sensor_effects=sensor_effects,
         cross_effects=cross_effects,
         priority=priority,
+        event_effects=dict(raw.get("event_effects", {})),
+        initial_level=float(raw.get("initial_level", 0.5)),
     )
 
 
@@ -480,24 +495,14 @@ def load_desires(path: Path = DESIRES_PATH) -> DesireState | None:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    """メインエントリポイント（cronから呼ばれる）。"""
-    logging.basicConfig(level=logging.WARNING)
+    """メインエントリポイント（cronから呼ばれる）。
 
-    if not MEMORY_DB_PATH.exists():
-        print(f"[desire-updater] memory.db が見つかりません: {MEMORY_DB_PATH}")
+    2026-09 から、更新は petit_desire.cli（家の表 `STATE#DESIRES` にも desires.json にも書ける
+    積み上げ式のエンジン）に任せる。上の compute_desires() は元の一括計算として残してある。
+    """
+    from petit_desire.cli import update_main
 
-    config = load_desire_config(CHARACTER_ID)
-    sensor_data = fetch_sensor_data(CHARACTER_ID)
-    state = compute_desires(MEMORY_DB_PATH, config, sensor_data)
-    save_desires(state)
-
-    now_str = datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S")
-    print(
-        f"[{now_str}] [desire-updater] 更新完了: dominant={state.dominant} "
-        f"desires={state.desires}"
-    )
-    if sensor_data:
-        print(f"  sensor: {sensor_data}")
+    update_main(sys.argv[1:])
 
 
 if __name__ == "__main__":
