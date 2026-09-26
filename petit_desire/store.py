@@ -115,9 +115,16 @@ class DynamoRowStore:
             kwargs["ConditionExpression"] = "attribute_exists(pk) AND attribute_not_exists(#u)"
             kwargs["ExpressionAttributeNames"]["#u"] = "updated_at"
         else:
-            kwargs["ConditionExpression"] = "#u = :expected"
+            # updated_at は秒単位。家 API（desires_store.py）は条件なしで `desires.<名前>` を書くので、
+            # 同じ秒の中の書き込みも見分けられるよう、読んだ desires の Map との一致も条件にする
             kwargs["ExpressionAttributeNames"]["#u"] = "updated_at"
+            kwargs["ExpressionAttributeNames"]["#d"] = "desires"
             kwargs["ExpressionAttributeValues"][":expected"] = expected["updated_at"]
+            if expected.get("desires") is None:
+                kwargs["ConditionExpression"] = "#u = :expected AND attribute_not_exists(#d)"
+            else:
+                kwargs["ConditionExpression"] = "#u = :expected AND #d = :expected_desires"
+                kwargs["ExpressionAttributeValues"][":expected_desires"] = to_dynamo(expected["desires"])
         try:
             self.table.update_item(**kwargs)
         except ClientError as e:
@@ -151,7 +158,9 @@ class FileRowStore:
                 cur = self.read()
                 if (cur is None) != (expected is None):
                     return False
-                if cur is not None and cur.get("updated_at") != (expected or {}).get("updated_at"):
+                if cur is not None and (cur.get("updated_at"), cur.get("desires")) != (
+                    (expected or {}).get("updated_at"), (expected or {}).get("desires")
+                ):
                     return False
                 merged = {**(cur or {}), **{k: row[k] for k in ROW_ATTRS if k in row}}
                 tmp = self.path.with_suffix(self.path.suffix + ".tmp")

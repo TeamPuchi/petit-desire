@@ -136,8 +136,9 @@ class DesireService:
         inputs = Inputs()
         if self.memory is not None:
             try:
-                cursor = engine.get("mem_cursor") if initialized else None
-                inputs.memories, inputs.memory_cursor = self.memory.read(cursor if cursor is not None else None)
+                # 読み位置が無い・空（{}）なら初回と同じ扱い（新しい順に少し遡る。最古から辿り直さない）
+                cursor = (engine.get("mem_cursor") or None) if initialized else None
+                inputs.memories, inputs.memory_cursor = self.memory.read(cursor)
             except Exception as e:
                 logger.warning("memory source failed: %s", type(e).__name__)
         if self.device is not None:

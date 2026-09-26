@@ -290,3 +290,49 @@ def test_character_config_file_wins(tmp_path):
 def test_memory_source_partition_key_matches_petit_memory():
     assert DynamoMemorySource("t", "mio").partition_key == "P#mio"
     assert DynamoMemorySource("t", "mio", house_id="h1").partition_key == "H#h1#P#mio"
+
+
+def test_conditional_write_detects_same_second_house_api_write(aws):
+    """家 API は条件なしで書き、updated_at は秒単位。同じ秒の中の書き込みも desires の一致で見分ける。"""
+    store = DynamoRowStore(TABLE, PID, region=REGION)
+    same_second = "2026-09-26T23:59:59Z"  # _house_api_apply が書く updated_at と同じ値
+    assert store.write({"desires": {"miss_companion": 0.5}, "updated_at": same_second}, None)
+    seen = store.read()
+    _house_api_apply(aws["table"], {"miss_companion": -0.1})  # タッチ（updated_at は同じ値のまま）
+    assert store.read()["updated_at"] == seen["updated_at"]
+    assert not store.write({"desires": {"miss_companion": 0.9}, "updated_at": same_second}, seen)
+    assert store.read()["desires"]["miss_companion"] == pytest.approx(0.4)
+    # 読み直せば書ける（service._commit のやり直しと同じ）
+    assert store.write({"desires": {"miss_companion": 0.45}, "updated_at": same_second}, store.read())
+
+
+def test_touch_in_same_second_survives_engine_update(aws, monkeypatch):
+    """engine の読み→書きの間に家 API が同じ秒で書いても、タッチの差分が消えない。"""
+    svc = DesireService.from_env(PID, _env(aws))
+    t0 = datetime(2026, 9, 26, 23, 59, 59, tzinfo=timezone.utc)
+    svc.update(t0)
+    real_read = svc.store.read
+    state = {"n": 0}
+
+    def racing_read():
+        row = real_read()
+        state["n"] += 1
+        if state["n"] == 2:  # _commit が読んだ直後に家 API が書く
+            _house_api_apply(aws["table"], {"miss_companion": -0.15})
+        return row
+
+    monkeypatch.setattr(svc.store, "read", racing_read)
+    row, _ = svc.update(t0)  # 同じ秒・経過 0
+    assert row["desires"]["miss_companion"] == pytest.approx(0.35, abs=1e-3)
+
+
+def test_empty_memory_cursor_is_treated_as_first_run(aws):
+    now = datetime.now(timezone.utc)
+    for i in range(3):
+        _put_memory(aws, f"m{i}", now - timedelta(hours=3 - i), "調べた")
+    src = DynamoMemorySource(TABLE, PID, region=REGION)
+    events, cursor = src.read({})
+    assert len(events) == 3
+    assert cursor["MEM#"].endswith("#m2")  # 新しい順に遡った先頭（最新）が読み位置
+    events, _ = src.read(cursor)
+    assert events == []

@@ -90,7 +90,7 @@ class DynamoMemorySource:
         items: list[dict[str, Any]] = []
         for prefix in MEMORY_PREFIXES:
             pk_cond = Key("pk").eq(self.partition_key)
-            if cursor is None:
+            if not cursor:  # None も {} も初回扱い
                 # 初回: 新しい順に少しだけ遡る（最後に満たされた時刻を知るため）
                 got = self._query(
                     KeyConditionExpression=pk_cond & Key("sk").begins_with(prefix),
@@ -173,7 +173,7 @@ class SqliteMemorySource:
             try:
                 cols = {r[1] for r in conn.execute("PRAGMA table_info(memories)")}
                 cat = "category" if "category" in cols else "NULL"
-                if cursor is None:
+                if not cursor:  # None も {} も初回扱い
                     rows = conn.execute(
                         f"SELECT content, timestamp, {cat} FROM memories ORDER BY timestamp DESC LIMIT ?",
                         (INITIAL_SCAN,),
