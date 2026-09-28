@@ -20,7 +20,9 @@ from typing import Any, Protocol
 
 DESIRES_SK = "STATE#DESIRES"
 # 書く属性（これ以外の属性には触らない）
-ROW_ATTRS = ("desires", "updated_at", "dominant", "labels", "engine")
+# shape: ぷちが決めた欲求の形（akatsuki-petit#106・shape.py）。step() の行には入らないので、
+# 書くのは shape_desire／retire_desire だけ
+ROW_ATTRS = ("desires", "updated_at", "dominant", "labels", "engine", "shape")
 
 
 class RowStore(Protocol):

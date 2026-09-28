@@ -48,5 +48,8 @@ DEFAULT_DESIRE_CONFIG: dict[str, Any] = {
         "snack": {"miss_companion": {"add": -0.05}},
     },
     "initial_level": 0.5,
+    # 休む時間（akatsuki-petit#157・2026-09-29 の叩き）。夜 0〜7 時と、機体が眠っている間は、
+    # 時間で満ちる速さを 1/4 にする
+    "rest_hours": {"start": "00:00", "end": "07:00", "rate": 0.25, "when_sleeping": True},
     "priority": ["miss_companion", "curiosity"],
 }
