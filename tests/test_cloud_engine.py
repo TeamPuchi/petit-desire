@@ -175,3 +175,57 @@ def test_default_config_is_loadable():
     assert c.desires["miss_companion"].keywords  # COMPANION_NAME から自動生成
     row = step(None, c, Inputs(), T0)
     assert row["dominant"] == "miss_companion"  # 同値は priority 順
+
+
+# ===================== 休む時間（akatsuki-petit#157） =====================
+
+def test_growth_is_the_same_however_often_the_updater_runs():
+    """5 分ごとに回しても、2 時間まとめて 1 回でも、伸びは同じ（二重に数えていない）。"""
+    c = cfg()
+    row = step(None, c, Inputs(), T0)
+    every5 = row
+    for m in range(5, 121, 5):
+        every5 = step(every5, c, Inputs(), T0 + timedelta(minutes=m))
+    once = step(row, c, Inputs(), T0 + timedelta(hours=2))
+    for k, v in once["desires"].items():
+        assert every5["desires"][k] == pytest.approx(v, abs=0.002)  # 1 回ごとの丸め（小数 4 桁）ぶんだけ違う
+    assert once["desires"]["miss_companion"] == pytest.approx(min(1.0, 0.5 + 2 / 3), abs=0.001)
+
+
+def test_growth_hours_weights_rest_window():
+    from petit_desire.engine import growth_hours, in_rest
+
+    rest = {"start": "00:00", "end": "07:00", "rate": 0.25, "when_sleeping": True}
+    local = datetime.now().astimezone().tzinfo
+    night = datetime(2026, 9, 28, 3, 0, tzinfo=local)
+    assert in_rest(night, rest) and not in_rest(night.replace(hour=12), rest)
+    assert growth_hours(night, night + timedelta(hours=2), rest) == pytest.approx(0.5, abs=0.01)
+    day = night.replace(hour=12)
+    assert growth_hours(day, day + timedelta(hours=2), rest) == pytest.approx(2.0, abs=0.01)
+    # 6 時〜8 時: 1 時間は休む時間（×1/4）、1 時間は昼
+    six = night.replace(hour=6)
+    assert growth_hours(six, six + timedelta(hours=2), rest) == pytest.approx(1.25, abs=0.01)
+    # 機体が眠っている間は昼でも休む
+    assert growth_hours(day, day + timedelta(hours=2), rest, sleeping=True) == pytest.approx(0.5)
+    # 日をまたぐ窓（23 時〜6 時）
+    assert in_rest(night.replace(hour=23, minute=30), {"start": "23:00", "end": "06:00"})
+    assert growth_hours(day, day + timedelta(hours=2), None) == pytest.approx(2.0)
+
+
+def test_default_config_rests_at_night():
+    c = parse_desire_config(DEFAULT_DESIRE_CONFIG)
+    assert c.rest == {"start": "00:00", "end": "07:00", "rate": 0.25, "when_sleeping": True}
+
+
+def test_shape_is_applied_on_top_of_config():
+    from petit_desire.shape import apply_shape, satisfy_amount_of
+
+    c = cfg()
+    shaped = apply_shape(c, {"残したい": {"satisfaction_hours": 12, "satisfy_amount": 0.1, "name_ja": "残したい"},
+                             "curiosity": {"retired": True}})
+    assert set(shaped.desires) == {"miss_companion", "残したい"}
+    assert set(c.desires) == {"curiosity", "miss_companion"}  # 元の設定は変えない
+    assert satisfy_amount_of(shaped.desires["残したい"]) == 0.1
+    assert satisfy_amount_of(shaped.desires["miss_companion"]) == 0.4
+    row = step(None, shaped, Inputs(), T0)
+    assert row["labels"]["残したい"] == "残したい"

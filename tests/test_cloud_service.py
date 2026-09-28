@@ -33,6 +33,18 @@ def _iso(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).isoformat()
 
 
+@pytest.fixture(autouse=True)
+def _no_rest_hours(monkeypatch, request):
+    """ここのテストは壁の時計（いま）で経過時間ぶんの伸びを見るので、休む時間（#157）を外す。
+    休む時間そのものは test_rest_hours_* と test_cloud_engine.py で見る。"""
+    if "rest" in request.node.name:
+        return
+    from petit_desire import service as service_mod
+    cfg = dict(service_mod.DEFAULT_DESIRE_CONFIG)
+    cfg.pop("rest_hours", None)
+    monkeypatch.setattr(service_mod, "DEFAULT_DESIRE_CONFIG", cfg)
+
+
 @pytest.fixture
 def aws(monkeypatch):
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "testing")
@@ -260,7 +272,8 @@ async def test_mcp_list_tools_names(aws, monkeypatch):
     monkeypatch.setenv("CHARACTER_ID", PID)
     monkeypatch.setattr(mcp_server, "_service", None)
     tools = await mcp_server.list_tools()
-    assert [t.name for t in tools] == ["get_desires", "satisfy_desire", "boost_desire"]
+    assert [t.name for t in tools] == ["get_desires", "satisfy_desire", "boost_desire", "shape_desire",
+                                       "retire_desire"]
     assert "curiosity(知りたい)" in tools[0].description
 
 
@@ -336,3 +349,103 @@ def test_empty_memory_cursor_is_treated_as_first_run(aws):
     assert cursor["MEM#"].endswith("#m2")  # 新しい順に遡った先頭（最新）が読み位置
     events, _ = src.read(cursor)
     assert events == []
+
+
+# ===================== ぷちが欲求の形を変える（akatsuki-petit#106） =====================
+
+def _svc(aws, monkeypatch):
+    for k, v in _env(aws).items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setenv("CHARACTER_ID", PID)
+    monkeypatch.setattr(mcp_server, "_service", None)
+    return mcp_server.service()
+
+
+def test_petit_can_add_its_own_desire_and_it_is_kept_in_the_row(aws, monkeypatch):
+    svc = _svc(aws, monkeypatch)
+    svc.update()
+    out = mcp_server.call_tool_sync("shape_desire", {
+        "desire_name": "確かめたい", "description": "気になったことが本当か確かめたい",
+        "satisfaction_hours": 6, "satisfy_amount": 0.2, "keywords": ["確かめた"], "level": 0.3})
+    assert out.startswith("[形] 新しい欲求を足した: 確かめたい（確かめたい）… 0→1 まで 6 時間・満たすと −0.2")
+    row = aws["table"].get_item(Key={"pk": f"P#{PID}", "sk": "STATE#DESIRES"})["Item"]
+    assert row["shape"]["確かめたい"]["satisfy_amount"] == Decimal("0.2")
+    assert row["desires"]["確かめたい"] == Decimal("0.3")
+    assert row["labels"]["確かめたい"] == "確かめたい"
+
+    # 別のプロセス（cron の desire-updater）からも同じ形で計算される
+    fresh = DesireService.from_env(PID, _env(aws))
+    t = datetime.now(timezone.utc)
+    fresh.update(now=t)  # 足したあと最初の更新で計算に入り、そこから時間で満ちる
+    row2, _ = fresh.update(now=t + timedelta(hours=3))
+    assert row2["desires"]["確かめたい"] == pytest.approx(0.3 + 3 / 6, abs=0.01)
+
+    # 満たし方は欲求ごと（−0.2）。boost も受け取る
+    out = mcp_server.call_tool_sync("satisfy_desire", {"desire_name": "確かめたい"})
+    assert "[満足] 確かめたい -0.2 →" in out
+    assert mcp_server.call_tool_sync("boost_desire", {"desire_name": "確かめたい", "amount": 0.1}).startswith(
+        "[ドーパミン] 確かめたい")
+    # amount を渡せば今回だけその量
+    assert "-0.05 →" in mcp_server.call_tool_sync("satisfy_desire", {"desire_name": "確かめたい", "amount": 0.05})
+    # get_desires に満たし方と、自分で決めた形だと出る
+    assert "満たすと −0.2・0→1 まで 6 時間・自分で決めた形" in mcp_server.call_tool_sync("get_desires", {})
+
+
+def test_petit_can_reshape_builtin_and_retire(aws, monkeypatch):
+    svc = _svc(aws, monkeypatch)
+    svc.update()
+    out = mcp_server.call_tool_sync("shape_desire", {"desire_name": "miss_companion", "satisfy_amount": 0.15,
+                                                     "satisfaction_hours": 8})
+    assert out.startswith("[形] 欲求の形を変えた: 会いたい（miss_companion）… 0→1 まで 8 時間・満たすと −0.15")
+    before = svc.levels(svc.store.read())["miss_companion"]
+    after = svc.levels(svc.satisfy("miss_companion"))["miss_companion"]
+    assert after == pytest.approx(max(0.0, before - 0.15), abs=0.001)
+
+    assert "手放した" in mcp_server.call_tool_sync("retire_desire", {"desire_name": "curiosity"})
+    row = svc.store.read()
+    assert "curiosity" not in row["desires"] and "curiosity" not in svc.levels(row)
+    assert "欲求名が不正" in mcp_server.call_tool_sync("satisfy_desire", {"desire_name": "curiosity"})
+    row, _ = svc.update()
+    assert "curiosity" not in row["desires"]  # 更新しても戻らない
+    # 同じ名前で shape_desire すれば戻る
+    assert "新しい欲求を足した" in mcp_server.call_tool_sync("shape_desire", {"desire_name": "curiosity"})
+    assert "curiosity" in svc.levels(svc.store.read())
+
+
+def test_shape_desire_refuses_bad_input(aws, monkeypatch):
+    _svc(aws, monkeypatch)
+    call = mcp_server.call_tool_sync
+    assert "satisfaction_hours" in call("shape_desire", {"desire_name": "残したい"})  # 新しいのに速さが無い
+    assert "記号" in call("shape_desire", {"desire_name": "a.b", "satisfaction_hours": 3})
+    assert "0.05〜1.0" in call("shape_desire", {"desire_name": "残したい", "satisfaction_hours": 3,
+                                              "satisfy_amount": 3})
+    for i in range(10):
+        call("shape_desire", {"desire_name": f"d{i}", "satisfaction_hours": 3})
+    assert "12 個まで" in call("shape_desire", {"desire_name": "もうひとつ", "satisfaction_hours": 3})
+    assert "無い" in call("retire_desire", {"desire_name": "ない欲求"})
+
+
+def test_rest_hours_slow_growth_at_night(aws, monkeypatch):
+    """#157: 夜（休む時間）は時間で満ちる速さが 1/4。昼と同じ 2 時間でも、夜は 0.6 → 1.0 に戻らない。"""
+    from zoneinfo import ZoneInfo
+    monkeypatch.setenv("TZ", "Asia/Tokyo")
+    import time as _time
+    if hasattr(_time, "tzset"):
+        _time.tzset()
+    svc = DesireService.from_env(PID, _env(aws))
+    jst = ZoneInfo("Asia/Tokyo")
+    t3 = datetime(2026, 9, 28, 3, 0, tzinfo=jst)
+    svc.update(now=t3)
+    svc.nudge("miss_companion", 0.6 - svc.levels(svc.store.read())["miss_companion"])
+    row, _ = svc.update(now=t3 + timedelta(minutes=1))
+    base = svc.levels(row)["miss_companion"]
+    for m in range(5, 121, 5):  # cron と同じく 5 分ごと
+        row, _ = svc.update(now=t3 + timedelta(minutes=1 + m))
+    grown = svc.levels(row)["miss_companion"] - base
+    if _local_is_jst():
+        assert grown == pytest.approx(2 / 3 * 0.25, abs=0.01)  # 2 時間 ÷ 3 時間 × 1/4
+    assert row["engine"]["grown_h"] <= 5 / 60 + 1e-6
+
+
+def _local_is_jst() -> bool:
+    return datetime(2026, 1, 1, tzinfo=timezone.utc).astimezone().utcoffset() == timedelta(hours=9)

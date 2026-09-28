@@ -32,11 +32,15 @@ M5 Petitに、時間経過とセンサー入力に基づいて変化する内的
 ```bash
 desire-updater <id>    # 5分ごと（petit-env の cron）
 desire-status <id>     # 今の欲求を短く出す（自律行動のプロンプトに差し込む）
-desire-system          # MCP サーバー（get_desires / satisfy_desire / boost_desire。CHARACTER_ID を env で渡す）
+desire-system          # MCP サーバー（get_desires / satisfy_desire / boost_desire / shape_desire / retire_desire。CHARACTER_ID を env で渡す）
 ```
 
 環境変数の一覧は `petit_desire/service.py` の先頭。`desire_config.json` が無いキャラは `petit_desire/defaults.py` の既定（仮置き）で動きます。
-`desire_config.json` にはクラウド版で次を足せます: 欲求ごとの `categories`（記憶の種類で満たす）、全体の `event_effects`（SNS の出来事 → 効果）、`initial_level`（手がかりが無い欲求の出発点）。
+`desire_config.json` にはクラウド版で次を足せます: 欲求ごとの `categories`（記憶の種類で満たす）・`satisfy_amount`（satisfy_desire 1 回で下がる量。既定 0.4）、全体の `event_effects`（SNS の出来事 → 効果）、`initial_level`（手がかりが無い欲求の出発点）、`rest_hours`（休む時間。下）。
+
+**ぷちが決める欲求の形**（akatsuki-petit#106）: ぷちは `shape_desire` で欲求を足したり（名前は日本語でよい）、満ちる速さ・満たし方を変えたりでき、`retire_desire` で手放せます。決めた形は欲求の行の属性 `shape` に置き（`petit_desire/shape.py`）、設定ファイルの上に重ねて計算します。次の更新（5 分ごと）・次の自律行動から効きます。
+
+**休む時間**（akatsuki-petit#157）: `rest_hours` `{"start": "00:00", "end": "07:00", "rate": 0.25, "when_sleeping": true}`（時刻はコンテナの TZ）の間と、機体が眠っている間（`when_sleeping`）は、時間で満ちる速さを `rate` 倍にします。既定（defaults.py）は夜 0〜7 時を 1/4。`desire_config.json` を置いているキャラは、そちらに書いたときだけ効きます。
 
 ## 必要環境
 
@@ -135,7 +139,7 @@ cronで5分ごとに更新します。
 
 ### satisfy_desire
 
-行動した後に欲求を満たします(レベルが0.4下がる)。
+行動した後に欲求を満たします(レベルが欲求ごとの `satisfy_amount` だけ下がる。既定 0.4。`amount` を渡せばその分)。
 
 ```json
 { "desire_name": "curiosity" }
@@ -147,6 +151,14 @@ cronで5分ごとに更新します。
 
 ```json
 { "desire_name": "curiosity", "amount": 0.3 }
+```
+
+### shape_desire / retire_desire（クラウド版）
+
+欲求を足す・形を変える／手放す。
+
+```json
+{ "desire_name": "確かめたい", "description": "気になったことが本当か確かめたい", "satisfaction_hours": 6, "satisfy_amount": 0.2, "keywords": ["確かめた"] }
 ```
 
 ## 開発

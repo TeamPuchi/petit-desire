@@ -30,7 +30,8 @@ from typing import Any, Callable
 from desire_updater import DesireSystemConfig, parse_desire_config
 
 from .defaults import DEFAULT_DESIRE_CONFIG
-from .engine import Inputs, nudge, parse_time, step, utcnow
+from .engine import Inputs, iso, nudge, parse_time, step, utcnow
+from .shape import MAX_DESIRES, ShapeError, apply_shape, check_name, new_spec, satisfy_amount_of, shape_of
 from .store import DynamoRowStore, FileRowStore, RowStore, region_from_env
 
 logger = logging.getLogger("petit-desire")
@@ -153,24 +154,97 @@ class DesireService:
                 logger.warning("sns source failed: %s", type(e).__name__)
         return inputs
 
+    def config_for(self, row: dict[str, Any] | None) -> DesireSystemConfig:
+        """生まれつきの設定に、ぷちが行に置いた形（shape）を重ねたもの（akatsuki-petit#106）。"""
+        return apply_shape(self.config, shape_of(row))
+
     def update(self, now: datetime | None = None) -> tuple[dict[str, Any], Inputs]:
         now = now or utcnow()
         inputs = self.gather(self.store.read(), now)
-        row = self._commit(lambda r: step(r, self.config, inputs, now))
+        row = self._commit(lambda r: step(r, self.config_for(r), inputs, now))
         return row, inputs
 
     def nudge(self, name: str, delta: float, *, satisfied: bool = False) -> dict[str, Any]:
-        if name not in self.config.desires:
+        if name not in self.config_for(self.store.read()).desires:
             raise KeyError(name)
         now = utcnow()
-        return self._commit(lambda r: nudge(r, self.config, name, delta, now, satisfied=satisfied))
+        return self._commit(lambda r: nudge(r, self.config_for(r), name, delta, now, satisfied=satisfied))
 
-    def satisfy(self, name: str) -> dict[str, Any]:
-        return self.nudge(name, -SATISFY_AMOUNT, satisfied=True)
+    def satisfy_amount(self, name: str, row: dict[str, Any] | None = None) -> float:
+        cfg = self.config_for(row if row is not None else self.store.read())
+        return satisfy_amount_of(cfg.desires[name]) if name in cfg.desires else SATISFY_AMOUNT
+
+    def satisfy(self, name: str, amount: float | None = None) -> dict[str, Any]:
+        """満たす。amount を省けば、その欲求の満たし方（satisfy_amount、無ければ 0.4）だけ下げる。"""
+        if amount is None:
+            amount = self.satisfy_amount(name)
+        amount = max(0.0, min(1.0, float(amount)))
+        return self.nudge(name, -amount, satisfied=True)
 
     def boost(self, name: str, amount: float) -> tuple[dict[str, Any], float]:
         amount = max(0.0, min(BOOST_MAX, float(amount)))
         return self.nudge(name, amount), amount
+
+    # ── 形を変える（akatsuki-petit#106） ──
+
+    def shape(self, name: str, *, name_ja: str | None = None, description: str | None = None,
+              satisfaction_hours: float | None = None, satisfy_amount: float | None = None,
+              keywords: list[str] | None = None, level: float | None = None) -> tuple[dict[str, Any], bool]:
+        """欲求を足す（無い名前）か、形を変える（ある名前）。(行, 新しく足したか)。
+
+        新しい欲求は level（省けば initial_level）から始まり、次の更新から時間で満ちていく。
+        手放した（retire）名前を渡すと、戻ってくる。
+        """
+        name = check_name(name)
+        spec = new_spec(name_ja=name_ja, description=description, satisfaction_hours=satisfaction_hours,
+                        satisfy_amount=satisfy_amount, keywords=keywords)
+        now = utcnow()
+        added = {"v": False}
+
+        def make(r: dict[str, Any] | None) -> dict[str, Any]:
+            row = dict(r or {})
+            shape = shape_of(row)
+            cfg = self.config_for(row)
+            is_new = name not in cfg.desires
+            if is_new and len(cfg.desires) >= MAX_DESIRES:
+                raise ShapeError(f"欲求は {MAX_DESIRES} 個まで。足すなら、どれかを retire_desire で手放してから")
+            if is_new and "satisfaction_hours" not in spec and name not in self.config.desires:
+                raise ShapeError("新しい欲求には satisfaction_hours（0 から 1 まで満ちる時間）が要る")
+            entry = {} if shape.get(name, {}).get("retired") else dict(shape.get(name, {}))
+            entry.update(spec)
+            entry.update({"by": "petit", "at": iso(now)})
+            shape[name] = entry
+            row["shape"] = shape
+            desires = dict(row.get("desires") or {})
+            if is_new:
+                start = self.config.initial_level if level is None else max(0.0, min(1.0, float(level)))
+                desires[name] = round(start, 4)
+            row["desires"] = desires
+            row["updated_at"] = iso(now)
+            row["labels"] = {k: d.name_ja for k, d in apply_shape(self.config, shape).desires.items()}
+            added["v"] = is_new
+            return row
+
+        return self._commit(make), added["v"]
+
+    def retire(self, name: str) -> dict[str, Any]:
+        """欲求を手放す（計算にも表示にも出さない）。shape_desire で同じ名前を渡せば戻る。"""
+        name = check_name(name)
+        now = utcnow()
+
+        def make(r: dict[str, Any] | None) -> dict[str, Any]:
+            row = dict(r or {})
+            if name not in self.config_for(row).desires:
+                raise ShapeError(f"「{name}」という欲求は無い")
+            shape = shape_of(row)
+            shape[name] = {"retired": True, "by": "petit", "at": iso(now)}
+            row["shape"] = shape
+            row["desires"] = {k: v for k, v in (row.get("desires") or {}).items() if k != name}
+            row["updated_at"] = iso(now)
+            row["labels"] = {k: d.name_ja for k, d in apply_shape(self.config, shape).desires.items()}
+            return row
+
+        return self._commit(make)
 
     def current(self, refresh_if_stale: bool = True) -> dict[str, Any] | None:
         """今の行。古ければ（cron が止まっている等）その場で更新してから返す。"""
@@ -190,7 +264,7 @@ class DesireService:
     def levels(self, row: dict[str, Any] | None) -> dict[str, float]:
         desires = (row or {}).get("desires") or {}
         out = {}
-        for name in self.config.desires:
+        for name in self.config_for(row).desires:
             if name in desires:
                 try:
                     out[name] = float(desires[name])
@@ -202,9 +276,11 @@ class DesireService:
         levels = self.levels(row)
         if not levels:
             return "欲求はまだ計算されていない（desire-updater がまだ一度も回っていない）。"
-        labels = {k: d.name_ja for k, d in self.config.desires.items()}
-        order = sorted(levels, key=lambda k: (-levels[k], self.config.priority.index(k)
-                                               if k in self.config.priority else 99))
+        cfg = self.config_for(row)
+        labels = {k: d.name_ja for k, d in cfg.desires.items()}
+        order = sorted(levels, key=lambda k: (-levels[k], cfg.priority.index(k)
+                                               if k in cfg.priority else 99))
+        mine = {k for k, v in shape_of(row).items() if not v.get("retired")}
         dominant = order[0]
         lines = []
         if not compact:
@@ -216,8 +292,13 @@ class DesireService:
             v = levels[k]
             bar = "█" * int(v * 10) + "░" * (10 - int(v * 10))
             mark = " ←強い" if v >= STRONG else ""
-            desc = self.config.desires[k].description
-            lines.append(f"  {labels.get(k, k)}（{k}）: [{bar}] {v:.3f}{mark}" + (f" … {desc}" if desc else ""))
+            d = cfg.desires[k]
+            desc = d.description
+            how = ""
+            if not compact:
+                own = "・自分で決めた形" if k in mine else ""
+                how = f"（満たすと −{satisfy_amount_of(d):g}・0→1 まで {d.satisfaction_hours:g} 時間{own}）"
+            lines.append(f"  {labels.get(k, k)}（{k}）: [{bar}] {v:.3f}{mark}{how}" + (f" … {desc}" if desc else ""))
         strong = [k for k in order if levels[k] >= STRONG]
         lines.append("")
         if strong:
