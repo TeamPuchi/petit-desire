@@ -216,6 +216,13 @@ def test_default_config_has_no_rest_window():
     assert not hasattr(parse_desire_config(DEFAULT_DESIRE_CONFIG), "rest")
 
 
+def test_default_hours_are_the_longer_ones():
+    """なぎさん 9/29「夜の欲求は長くしておいて」: 既定の満タンまでの時間は 知りたい 4 時間・会いたい 6 時間。"""
+    c = parse_desire_config(DEFAULT_DESIRE_CONFIG)
+    assert c.desires["curiosity"].satisfaction_hours == 4.0
+    assert c.desires["miss_companion"].satisfaction_hours == 6.0
+
+
 def test_shape_is_applied_on_top_of_config():
     from petit_desire.shape import apply_shape, satisfy_amount_of
 
