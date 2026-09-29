@@ -33,18 +33,6 @@ def _iso(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).isoformat()
 
 
-@pytest.fixture(autouse=True)
-def _no_rest_hours(monkeypatch, request):
-    """ここのテストは壁の時計（いま）で経過時間ぶんの伸びを見るので、休む時間（#157）を外す。
-    休む時間そのものは test_rest_hours_* と test_cloud_engine.py で見る。"""
-    if "rest" in request.node.name:
-        return
-    from petit_desire import service as service_mod
-    cfg = dict(service_mod.DEFAULT_DESIRE_CONFIG)
-    cfg.pop("rest_hours", None)
-    monkeypatch.setattr(service_mod, "DEFAULT_DESIRE_CONFIG", cfg)
-
-
 @pytest.fixture
 def aws(monkeypatch):
     monkeypatch.setenv("AWS_ACCESS_KEY_ID", "testing")
@@ -425,27 +413,16 @@ def test_shape_desire_refuses_bad_input(aws, monkeypatch):
     assert "無い" in call("retire_desire", {"desire_name": "ない欲求"})
 
 
-def test_rest_hours_slow_growth_at_night(aws, monkeypatch):
-    """#157: 夜（休む時間）は時間で満ちる速さが 1/4。昼と同じ 2 時間でも、夜は 0.6 → 1.0 に戻らない。"""
-    from zoneinfo import ZoneInfo
-    monkeypatch.setenv("TZ", "Asia/Tokyo")
-    import time as _time
-    if hasattr(_time, "tzset"):
-        _time.tzset()
+def test_night_growth_is_the_same_as_day(aws, monkeypatch):
+    """#157: 元の欲求システムどおり、夜 3 時に 0.6 に下げても 2 時間で 0.6 + 2/3 → 1.0 に戻る（昼と同じ速さ）。"""
     svc = DesireService.from_env(PID, _env(aws))
-    jst = ZoneInfo("Asia/Tokyo")
-    t3 = datetime(2026, 9, 28, 3, 0, tzinfo=jst)
-    svc.update(now=t3)
-    svc.nudge("miss_companion", 0.6 - svc.levels(svc.store.read())["miss_companion"])
-    row, _ = svc.update(now=t3 + timedelta(minutes=1))
-    base = svc.levels(row)["miss_companion"]
-    for m in range(5, 121, 5):  # cron と同じく 5 分ごと
-        row, _ = svc.update(now=t3 + timedelta(minutes=1 + m))
-    grown = svc.levels(row)["miss_companion"] - base
-    if _local_is_jst():
-        assert grown == pytest.approx(2 / 3 * 0.25, abs=0.01)  # 2 時間 ÷ 3 時間 × 1/4
-    assert row["engine"]["grown_h"] <= 5 / 60 + 1e-6
-
-
-def _local_is_jst() -> bool:
-    return datetime(2026, 1, 1, tzinfo=timezone.utc).astimezone().utcoffset() == timedelta(hours=9)
+    jst = timezone(timedelta(hours=9))
+    for t0 in (datetime(2026, 9, 28, 3, 0, tzinfo=jst), datetime(2026, 9, 28, 13, 0, tzinfo=jst)):
+        svc.update(now=t0)
+        svc.nudge("miss_companion", 0.6 - svc.levels(svc.store.read())["miss_companion"])
+        row, _ = svc.update(now=t0 + timedelta(minutes=1))
+        base = svc.levels(row)["miss_companion"]
+        assert base == pytest.approx(0.6, abs=0.01)
+        for m in range(5, 61, 5):  # cron と同じく 5 分ごとに 1 時間
+            row, _ = svc.update(now=t0 + timedelta(minutes=1 + m))
+        assert svc.levels(row)["miss_companion"] - base == pytest.approx(1 / 3, abs=0.01)

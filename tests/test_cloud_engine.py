@@ -177,7 +177,7 @@ def test_default_config_is_loadable():
     assert row["dominant"] == "miss_companion"  # 同値は priority 順
 
 
-# ===================== 休む時間（akatsuki-petit#157） =====================
+# ===================== 満ちる速さ（akatsuki-petit#157） =====================
 
 def test_growth_is_the_same_however_often_the_updater_runs():
     """5 分ごとに回しても、2 時間まとめて 1 回でも、伸びは同じ（二重に数えていない）。"""
@@ -192,29 +192,28 @@ def test_growth_is_the_same_however_often_the_updater_runs():
     assert once["desires"]["miss_companion"] == pytest.approx(min(1.0, 0.5 + 2 / 3), abs=0.001)
 
 
-def test_growth_hours_weights_rest_window():
-    from petit_desire.engine import growth_hours, in_rest
+def test_growth_is_the_same_day_and_night():
+    """元の欲求システムと同じく、夜も昼も満ちる速さは同じ（akatsuki-petit#157 の 1/4 は外した）。"""
+    from petit_desire.engine import growth_hours
 
-    rest = {"start": "00:00", "end": "07:00", "rate": 0.25, "when_sleeping": True}
     local = datetime.now().astimezone().tzinfo
     night = datetime(2026, 9, 28, 3, 0, tzinfo=local)
-    assert in_rest(night, rest) and not in_rest(night.replace(hour=12), rest)
-    assert growth_hours(night, night + timedelta(hours=2), rest) == pytest.approx(0.5, abs=0.01)
     day = night.replace(hour=12)
-    assert growth_hours(day, day + timedelta(hours=2), rest) == pytest.approx(2.0, abs=0.01)
-    # 6 時〜8 時: 1 時間は休む時間（×1/4）、1 時間は昼
-    six = night.replace(hour=6)
-    assert growth_hours(six, six + timedelta(hours=2), rest) == pytest.approx(1.25, abs=0.01)
-    # 機体が眠っている間は昼でも休む
-    assert growth_hours(day, day + timedelta(hours=2), rest, sleeping=True) == pytest.approx(0.5)
-    # 日をまたぐ窓（23 時〜6 時）
-    assert in_rest(night.replace(hour=23, minute=30), {"start": "23:00", "end": "06:00"})
-    assert growth_hours(day, day + timedelta(hours=2), None) == pytest.approx(2.0)
+    assert growth_hours(night, night + timedelta(hours=2)) == pytest.approx(2.0)
+    assert growth_hours(day, day + timedelta(hours=2)) == pytest.approx(2.0)
+    c = cfg()
+    grown = []
+    for start in (night, day):
+        row = step(None, c, Inputs(), start)
+        row = step(row, c, Inputs(sensors={"sleeping": 1}), start + timedelta(hours=1))  # 機体が眠っていても同じ
+        grown.append(row["desires"]["miss_companion"])
+    hours = c.desires["miss_companion"].satisfaction_hours
+    assert grown[0] == grown[1] == pytest.approx(0.5 + 1 / hours, abs=0.001)
 
 
-def test_default_config_rests_at_night():
-    c = parse_desire_config(DEFAULT_DESIRE_CONFIG)
-    assert c.rest == {"start": "00:00", "end": "07:00", "rate": 0.25, "when_sleeping": True}
+def test_default_config_has_no_rest_window():
+    assert "rest_hours" not in DEFAULT_DESIRE_CONFIG
+    assert not hasattr(parse_desire_config(DEFAULT_DESIRE_CONFIG), "rest")
 
 
 def test_shape_is_applied_on_top_of_config():

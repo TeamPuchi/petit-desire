@@ -36,11 +36,11 @@ desire-system          # MCP サーバー（get_desires / satisfy_desire / boost
 ```
 
 環境変数の一覧は `petit_desire/service.py` の先頭。`desire_config.json` が無いキャラは `petit_desire/defaults.py` の既定（仮置き）で動きます。
-`desire_config.json` にはクラウド版で次を足せます: 欲求ごとの `categories`（記憶の種類で満たす）・`satisfy_amount`（satisfy_desire 1 回で下がる量。既定 0.4）、全体の `event_effects`（SNS の出来事 → 効果）、`initial_level`（手がかりが無い欲求の出発点）、`rest_hours`（休む時間。下）。
+`desire_config.json` にはクラウド版で次を足せます: 欲求ごとの `categories`（記憶の種類で満たす）・`satisfy_amount`（satisfy_desire 1 回で下がる量。既定 0.4）、全体の `event_effects`（SNS の出来事 → 効果）、`initial_level`（手がかりが無い欲求の出発点）。
 
 **ぷちが決める欲求の形**（akatsuki-petit#106）: ぷちは `shape_desire` で欲求を足したり（名前は日本語でよい）、満ちる速さ・満たし方を変えたりでき、`retire_desire` で手放せます。決めた形は欲求の行の属性 `shape` に置き（`petit_desire/shape.py`）、設定ファイルの上に重ねて計算します。次の更新（5 分ごと）・次の自律行動から効きます。
 
-**休む時間**（akatsuki-petit#157）: `rest_hours` `{"start": "00:00", "end": "07:00", "rate": 0.25, "when_sleeping": true}`（時刻はコンテナの TZ）の間と、機体が眠っている間（`when_sleeping`）は、時間で満ちる速さを `rate` 倍にします。既定（defaults.py）は夜 0〜7 時を 1/4。`desire_config.json` を置いているキャラは、そちらに書いたときだけ効きます。
+**満ちる速さは元のまま**: 時間で満ちる速さは元と同じく「経過時間 ÷ `satisfaction_hours`」で、昼も夜も・平日も休日も・機体が眠っていても同じです（akatsuki-petit#157 で一度入れた「夜 0〜7 時と眠っている間は 1/4」は、元の挙動を変えるので外しました）。夜に戻りが速く見えるのは、下げる手がかり（会話・触れ合い・自律行動）が夜は無いためです。
 
 ## 必要環境
 
