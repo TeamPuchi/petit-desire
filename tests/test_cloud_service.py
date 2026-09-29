@@ -119,8 +119,8 @@ def test_sealed_memory_keyword_satisfies_and_is_not_logged(aws, capsys):
     svc = DesireService.from_env(PID, _env(aws))
     row, inputs = svc.update(now)
     assert len(inputs.memories) == 2
-    assert row["desires"]["miss_companion"] == pytest.approx(1 / 3, abs=1e-2)  # 1h ÷ 3h
-    assert row["desires"]["curiosity"] == pytest.approx(0.25, abs=1e-2)  # 0.5h ÷ 2h
+    assert row["desires"]["miss_companion"] == pytest.approx(1 / 6, abs=1e-2)  # 1h ÷ 6h
+    assert row["desires"]["curiosity"] == pytest.approx(0.125, abs=1e-2)  # 0.5h ÷ 4h
     item = aws["table"].get_item(Key={"pk": "P#mio", "sk": "STATE#DESIRES"})["Item"]
     assert "なぎと話した" not in json.dumps(item, default=str, ensure_ascii=False)
     assert "なぎと話した" not in capsys.readouterr().out
@@ -133,7 +133,7 @@ def test_memory_without_keys_falls_back_to_category(aws):
     env.pop("PETIT_MEMORY_KEYS_TABLE")  # 鍵が無い＝本文は読めない
     svc = DesireService.from_env(PID, env)
     row, _ = svc.update(now)
-    assert row["desires"]["miss_companion"] == pytest.approx(1 / 3, abs=1e-2)
+    assert row["desires"]["miss_companion"] == pytest.approx(1 / 6, abs=1e-2)
 
 
 def test_memory_cursor_reads_only_new(aws):
@@ -147,7 +147,7 @@ def test_memory_cursor_reads_only_new(aws):
     _put_memory(aws, "m2", now + timedelta(minutes=6), "また調べた")
     row, third = svc.update(now + timedelta(minutes=10))
     assert len(third.memories) == 1
-    assert row["desires"]["curiosity"] == pytest.approx((4 / 60) / 2, abs=1e-2)
+    assert row["desires"]["curiosity"] == pytest.approx((4 / 60) / 4, abs=1e-2)
 
 
 def test_device_row_battery_is_a_sensor(aws):
@@ -177,7 +177,7 @@ def test_house_api_touch_and_engine_coexist(aws):
     svc.update(t0)
     _house_api_apply(aws["table"], {"miss_companion": -0.15})  # stroke
     row, _ = svc.update(t0 + timedelta(minutes=30))
-    assert row["desires"]["miss_companion"] == pytest.approx(0.5 - 0.15 + 0.5 / 3, abs=1e-3)
+    assert row["desires"]["miss_companion"] == pytest.approx(0.5 - 0.15 + 0.5 / 6, abs=1e-3)
 
 
 def test_conditional_write_detects_concurrent_writer(aws):
@@ -214,7 +214,7 @@ def test_sns_inbox_events(aws, monkeypatch):
     assert row["desires"]["miss_companion"] == 0.5  # 初回: 過去分は効かせない
     assert row["engine"]["sns_cursor"] == "c1"
     row, _ = svc.update(now + timedelta(minutes=2))
-    assert row["desires"]["miss_companion"] == pytest.approx(0.5 - 0.1 + (2 / 60) / 3, abs=1e-3)
+    assert row["desires"]["miss_companion"] == pytest.approx(0.5 - 0.1 + (2 / 60) / 6, abs=1e-3)
     assert row["engine"]["sns_cursor"] == "c2"
     assert calls[1] == {"limit": "50", "after": "c1"}
 
@@ -414,7 +414,7 @@ def test_shape_desire_refuses_bad_input(aws, monkeypatch):
 
 
 def test_night_growth_is_the_same_as_day(aws, monkeypatch):
-    """#157: 元の欲求システムどおり、夜 3 時に 0.6 に下げても 2 時間で 0.6 + 2/3 → 1.0 に戻る（昼と同じ速さ）。"""
+    """#157: 元の欲求システムどおり、夜も昼と同じ速さ。既定の会いたい（6 時間で満タン）なら 1 時間で +1/6。"""
     svc = DesireService.from_env(PID, _env(aws))
     jst = timezone(timedelta(hours=9))
     for t0 in (datetime(2026, 9, 28, 3, 0, tzinfo=jst), datetime(2026, 9, 28, 13, 0, tzinfo=jst)):
@@ -425,4 +425,4 @@ def test_night_growth_is_the_same_as_day(aws, monkeypatch):
         assert base == pytest.approx(0.6, abs=0.01)
         for m in range(5, 61, 5):  # cron と同じく 5 分ごとに 1 時間
             row, _ = svc.update(now=t0 + timedelta(minutes=1 + m))
-        assert svc.levels(row)["miss_companion"] - base == pytest.approx(1 / 3, abs=0.01)
+        assert svc.levels(row)["miss_companion"] - base == pytest.approx(1 / 6, abs=0.01)

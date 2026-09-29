@@ -4,6 +4,9 @@
 - 欲求 2 つ（curiosity・miss_companion）と電池の効果: このリポの README「セットアップ」のサンプル
   （家 API の api-contract §5-1・付録 B-5 も同じ 2 つを叩きとして使っている）
 - categories・event_effects・initial_level: クラウド版で足した口。値は 2026-09-26 の叩き
+- satisfaction_hours（満タンまでの時間）: README の例は 知りたい 2 時間・会いたい 3 時間だったが、なぎさん 2026-09-29
+  「夜の欲求は長くしておいて」で 知りたい 4 時間・会いたい 6 時間に（akatsuki-petit#157）。計算の仕組みは元のまま。
+  embodied-claude の create_character.py の雛形は 何か調べたい 6 時間・会いたい 4 時間
 
 キャラごとに `$PETIT_DATA_DIR/characters/<id>/config/desire_config.json` を置けば、そちらが優先される。
 """
@@ -17,14 +20,14 @@ DEFAULT_DESIRE_CONFIG: dict[str, Any] = {
         "curiosity": {
             "name_ja": "知りたい",
             "description": "気になることを調べたい、新しいことを知りたい好奇心",
-            "satisfaction_hours": 2.0,
+            "satisfaction_hours": 4.0,
             "keywords": ["調べた", "検索した", "発見した", "学んだ"],
             "color": "#5bc8d4",
         },
         "miss_companion": {
             "name_ja": "会いたい",
             "description": "一緒にいる人と話したい、一緒にいたい気持ち",
-            "satisfaction_hours": 3.0,
+            "satisfaction_hours": 6.0,
             # 空なら COMPANION_NAME（無ければ PETIT_USER_NAME）から「〇〇と話した」等を作る
             "keywords": [],
             # 本文を読めない記憶でも、会話の記憶なら満たされたと数える（仮置き）
