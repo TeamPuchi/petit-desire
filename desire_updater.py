@@ -96,9 +96,6 @@ class DesireSystemConfig:
     event_effects: dict[str, dict[str, dict[str, float]]] = field(default_factory=dict)
     # クラウド版: 記憶にも手がかりが無い欲求の出発点（家 API の desires_store.DEFAULT_BASE と同じ 0.5）
     initial_level: float = 0.5
-    # クラウド版: 休む時間（akatsuki-petit#157）。この間は時間で満ちる速さを rate 倍にする。
-    # {"start": "00:00", "end": "07:00", "rate": 0.25, "when_sleeping": true}（時刻はコンテナの TZ）。None なら休まない
-    rest: dict[str, Any] | None = None
 
 
 def load_desire_config(char_id: str, data_dir: Path | None = None) -> DesireSystemConfig:
@@ -166,7 +163,6 @@ def parse_desire_config(raw: dict[str, Any], companion_name: str | None = None) 
         priority=priority,
         event_effects=dict(raw.get("event_effects", {})),
         initial_level=float(raw.get("initial_level", 0.5)),
-        rest=(dict(raw["rest_hours"]) if isinstance(raw.get("rest_hours"), dict) else None),
     )
 
 

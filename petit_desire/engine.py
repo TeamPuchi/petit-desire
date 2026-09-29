@@ -28,7 +28,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from desire_updater import DesireSystemConfig, apply_effects, evaluate_sensor_condition
@@ -65,53 +65,18 @@ def parse_time(value: Any) -> datetime | None:
     return dt.astimezone(timezone.utc)
 
 
-# ── 休む時間（akatsuki-petit#157） ──────────────────
+# ── 満ちる速さ ──────────────────────
 
 
-def _hhmm(value: Any, default: int) -> int:
-    """"07:00" / 7 / "7" → 分。読めなければ default。"""
-    try:
-        if isinstance(value, (int, float)):
-            return int(float(value) * 60) % 1440
-        h, _, m = str(value).partition(":")
-        return (int(h) * 60 + int(m or 0)) % 1440
-    except (TypeError, ValueError):
-        return default
+def growth_hours(prev_at: datetime, now: datetime) -> float:
+    """prev_at から now までに、時間で満ちるぶんの「時間」。元の欲求システムと同じく、経過時間そのもの。
 
-
-def in_rest(local: datetime, rest: dict[str, Any]) -> bool:
-    start, end = _hhmm(rest.get("start"), 0), _hhmm(rest.get("end"), 7 * 60)
-    now = local.hour * 60 + local.minute
-    if start == end:
-        return False
-    return start <= now < end if start < end else (now >= start or now < end)
-
-
-def growth_hours(prev_at: datetime, now: datetime, rest: dict[str, Any] | None, sleeping: bool = False) -> float:
-    """prev_at から now までに、時間で満ちるぶんの「時間」。休む時間（と、機体が眠っている間）は rate 倍に数える。
-
-    元は経過時間そのもの（夜も昼も同じ速さ）。夜は会話も自律行動も無く下げる手がかりが無いので、同じ速さでも
-    「夜のほうが戻りが速い」に見えていた（#157）。休む時間は 1 分きざみで数える（5 分ごとの更新なら 5 回）。
+    元（PetitOnes/m5-petit-desire の desire_updater）は「最後に満たされてからの経過時間 ÷ satisfaction_hours」で、
+    時刻（昼・夜）・曜日・機体が眠っているかで速さを変えない。クラウド版もそれに合わせる
+    （akatsuki-petit#157 で入れた夜 0〜7 時・眠っている間の 1/4 は、元の挙動を変えるので外した）。
     """
     real = max(0.0, (now - prev_at).total_seconds() / 3600)
-    real = min(real, MAX_GAP_HOURS)
-    if not rest:
-        return real
-    rate = max(0.0, min(1.0, float(rest.get("rate", 1.0))))
-    if rate >= 1.0:
-        return real
-    if sleeping and rest.get("when_sleeping"):
-        return real * rate
-    start = now - timedelta(hours=real)
-    total = 0.0
-    t = start
-    step = timedelta(minutes=1)
-    while t < now:
-        nxt = min(t + step, now)
-        w = rate if in_rest(t.astimezone(), rest) else 1.0  # コンテナの TZ（Asia/Tokyo）の時計で見る
-        total += w * (nxt - t).total_seconds() / 3600
-        t = nxt
-    return total
+    return min(real, MAX_GAP_HOURS)
 
 
 # ── 入力 ──────────────────────────────
@@ -232,8 +197,7 @@ def step(
 
     gap_h = 0.0
     if prev_at is not None:
-        sleeping = str((inputs.sensors or {}).get("sleeping")) in ("1", "True", "true")
-        gap_h = growth_hours(prev_at, now, config.rest, sleeping=sleeping)
+        gap_h = growth_hours(prev_at, now)
 
     # 記憶 → どの欲求が、いつ満たされたか（いちばん新しいもの）
     latest_mem: dict[str, datetime] = {}
@@ -327,8 +291,6 @@ def step(
         "sns_cursor": inputs.sns_cursor if inputs.sns_cursor is not None else (prev or {}).get("sns_cursor"),
         "sns_last_at": iso(newest_sns) if newest_sns else None,
         "sensors": {k: v for k, v in sensors.items() if isinstance(v, (int, float, bool, str))},
-        # 前回からの「満ちる時間」（休む時間は rate 倍。#157 を確かめるため）
-        "grown_h": round(gap_h, 4),
     }
     return {
         "desires": desires_out,
