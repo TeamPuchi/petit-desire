@@ -105,7 +105,7 @@ def test_update_writes_contract_row(aws):
     svc = DesireService.from_env(PID, _env(aws))
     row, _ = svc.update()
     item = aws["table"].get_item(Key={"pk": "P#mio", "sk": "STATE#DESIRES"})["Item"]
-    assert set(item["desires"]) == {"curiosity", "miss_companion"}
+    assert set(item["desires"]) == {"curiosity", "miss_companion", "sleepy"}
     assert all(isinstance(v, Decimal) for v in item["desires"].values())
     assert item["updated_at"].endswith("Z")
     assert item["engine"]["v"] == 1
@@ -168,7 +168,7 @@ def test_no_device_no_memory_no_sns_still_updates(aws):
     svc = DesireService.from_env(PID, _env(aws, PETIT_MEMORY_KEYS_TABLE="", PETIT_MEMORY_KMS_KEY_ID=""))
     row, inputs = svc.update()
     assert inputs.sensors == {} and inputs.memories == [] and inputs.sns == []
-    assert row["desires"] == {"curiosity": 0.5, "miss_companion": 0.5}
+    assert row["desires"] == {"curiosity": 0.5, "miss_companion": 0.5, "sleepy": 0.5}
 
 
 def test_house_api_touch_and_engine_coexist(aws):

@@ -171,7 +171,7 @@ def test_time_driven_false_and_base_level():
 
 def test_default_config_is_loadable():
     c = parse_desire_config(DEFAULT_DESIRE_CONFIG)
-    assert set(c.desires) == {"curiosity", "miss_companion"}
+    assert set(c.desires) == {"curiosity", "miss_companion", "sleepy"}
     assert c.desires["miss_companion"].keywords  # COMPANION_NAME から自動生成
     row = step(None, c, Inputs(), T0)
     assert row["dominant"] == "miss_companion"  # 同値は priority 順
@@ -221,6 +221,24 @@ def test_default_hours_are_the_longer_ones():
     c = parse_desire_config(DEFAULT_DESIRE_CONFIG)
     assert c.desires["curiosity"].satisfaction_hours == 4.0
     assert c.desires["miss_companion"].satisfaction_hours == 6.0
+
+
+def test_default_sleepy_is_satisfied_by_remembering_sleep():
+    """眠い（akatsuki-petit#186）: 時間で満ち、「スリープした」と記憶に残すと満たされる。満タンまで 30 時間（仮置き）。"""
+    c = parse_desire_config(DEFAULT_DESIRE_CONFIG)
+    sleepy = c.desires["sleepy"]
+    assert sleepy.name_ja == "眠い" and sleepy.satisfaction_hours == 30.0
+    assert sleepy.keywords == ["スリープ", "眠った", "寝た"]
+    row = step(None, c, Inputs(), T0)
+    assert row["desires"]["sleepy"] == 0.5  # 手がかりが無いうちは initial_level
+    row = step(row, c, Inputs(), T0 + timedelta(hours=6))
+    assert row["desires"]["sleepy"] == pytest.approx(0.7, abs=0.001)  # 6 時間で +0.2
+    slept = T0 + timedelta(hours=6, minutes=1)
+    row = step(row, c, Inputs(memories=[MemoryEvent(at=slept, content="眠くなったのでスリープした")]),
+               T0 + timedelta(hours=6, minutes=5))
+    assert row["desires"]["sleepy"] < 0.01  # 眠ったら満たされる
+    row = step(row, c, Inputs(), slept + timedelta(hours=21))
+    assert row["desires"]["sleepy"] == pytest.approx(0.7, abs=0.01)  # 次の日の同じころに、また眠くなる
 
 
 def test_shape_is_applied_on_top_of_config():
