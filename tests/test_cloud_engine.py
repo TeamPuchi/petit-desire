@@ -224,21 +224,27 @@ def test_default_hours_are_the_longer_ones():
 
 
 def test_default_sleepy_is_satisfied_by_remembering_sleep():
-    """眠い（akatsuki-petit#186）: 時間で満ち、「スリープした」と記憶に残すと満たされる。満タンまで 30 時間（仮置き）。"""
+    """眠い（akatsuki-petit#186）: 時間で満ち、「スリープした」と記憶に残すと満たされる。
+    満タンまで 16 時間（なぎさん 2026-10-02「人と同じように 1 日 1 日で」）。起きたときに家 API が 0 に戻す。"""
     c = parse_desire_config(DEFAULT_DESIRE_CONFIG)
     sleepy = c.desires["sleepy"]
-    assert sleepy.name_ja == "眠い" and sleepy.satisfaction_hours == 30.0
+    assert sleepy.name_ja == "眠い" and sleepy.satisfaction_hours == 16.0
     assert sleepy.keywords == ["スリープ", "眠った", "寝た"]
     row = step(None, c, Inputs(), T0)
     assert row["desires"]["sleepy"] == 0.5  # 手がかりが無いうちは initial_level
-    row = step(row, c, Inputs(), T0 + timedelta(hours=6))
-    assert row["desires"]["sleepy"] == pytest.approx(0.7, abs=0.001)  # 6 時間で +0.2
-    slept = T0 + timedelta(hours=6, minutes=1)
+    slept = T0 + timedelta(minutes=1)
     row = step(row, c, Inputs(memories=[MemoryEvent(at=slept, content="眠くなったのでスリープした")]),
-               T0 + timedelta(hours=6, minutes=5))
+               T0 + timedelta(minutes=5))
     assert row["desires"]["sleepy"] < 0.01  # 眠ったら満たされる
-    row = step(row, c, Inputs(), slept + timedelta(hours=21))
-    assert row["desires"]["sleepy"] == pytest.approx(0.7, abs=0.01)  # 次の日の同じころに、また眠くなる
+    # 8 時間眠って、朝に起きる。起きたとき家 API が眠いを 0 に戻す（他の書き手が動かした分として取り込む）
+    woke = slept + timedelta(hours=8)
+    row = step(row, c, Inputs(), woke)
+    assert row["desires"]["sleepy"] == pytest.approx(0.5, abs=0.01)  # 眠っているあいだも時間ぶんは進んでいる
+    row = {**row, "desires": {**row["desires"], "sleepy": 0.0}}        # 家 API: wake で -1（0 に丸め）
+    row = step(row, c, Inputs(), woke + timedelta(hours=11, minutes=12))
+    assert row["desires"]["sleepy"] == pytest.approx(0.7, abs=0.01)   # 起きて 11 時間ほどで眠くなる
+    row = step(row, c, Inputs(), woke + timedelta(hours=16))
+    assert row["desires"]["sleepy"] == 1.0                            # 起きて 16 時間で満タン
 
 
 def test_shape_is_applied_on_top_of_config():

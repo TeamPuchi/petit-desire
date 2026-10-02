@@ -35,7 +35,7 @@ desire-status <id>     # 今の欲求を短く出す（自律行動のプロン�
 desire-system          # MCP サーバー（get_desires / satisfy_desire / boost_desire / shape_desire / retire_desire。CHARACTER_ID を env で渡す）
 ```
 
-環境変数の一覧は `petit_desire/service.py` の先頭。`desire_config.json` が無いキャラは `petit_desire/defaults.py` の既定（仮置き。知りたい 4 時間・会いたい 6 時間で満タン。セットアップの例より長め＝なぎさん 2026-09-29。眠い＝30 時間で満タン・記憶に「スリープした」「眠った」「寝た」が残ると満たされる。akatsuki-petit#186。体を眠らせるのは家 API の house MCP の body_sleep）で動きます。
+環境変数の一覧は `petit_desire/service.py` の先頭。`desire_config.json` が無いキャラは `petit_desire/defaults.py` の既定（仮置き。知りたい 4 時間・会いたい 6 時間で満タン。セットアップの例より長め＝なぎさん 2026-09-29。眠い＝起きてから 16 時間で満タン（起きたときに家 API が 0 に戻す）・記憶に「スリープした」「眠った」「寝た」が残ると満たされる。akatsuki-petit#186。体を眠らせるのは家 API の house MCP の body_sleep）で動きます。
 `desire_config.json` にはクラウド版で次を足せます: 欲求ごとの `categories`（記憶の種類で満たす）・`satisfy_amount`（satisfy_desire 1 回で下がる量。既定 0.4）、全体の `event_effects`（SNS の出来事 → 効果）、`initial_level`（手がかりが無い欲求の出発点）。
 
 **ぷちが決める欲求の形**（akatsuki-petit#106）: ぷちは `shape_desire` で欲求を足したり（名前は日本語でよい）、満ちる速さ・満たし方を変えたりでき、`retire_desire` で手放せます。決めた形は欲求の行の属性 `shape` に置き（`petit_desire/shape.py`）、設定ファイルの上に重ねて計算します。次の更新（5 分ごと）・次の自律行動から効きます。
