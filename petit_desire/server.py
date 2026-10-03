@@ -23,6 +23,7 @@ from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp.types import TextContent, Tool
 
+from .preload import mark_preload
 from .service import BOOST_MAX, DesireService
 from .shape import HOURS_MAX, HOURS_MIN, MAX_DESIRES, SATISFY_MAX, SATISFY_MIN, ShapeError, satisfy_amount_of
 
@@ -72,7 +73,8 @@ async def list_tools() -> list[Tool]:
         svc = None
     cfg = _config(svc)
     names = ", ".join(cfg.desires) if cfg else "(get_desires で確認)"
-    return [
+    # PETIT_PRELOAD_TOOLS に書いた道具は最初から載せる（preload.py）
+    return mark_preload([
         Tool(
             name="get_desires",
             description=_describe(svc),
@@ -168,7 +170,7 @@ async def list_tools() -> list[Tool]:
                 "required": ["desire_name"],
             },
         ),
-    ]
+    ])
 
 
 def call_tool_sync(name: str, arguments: dict[str, Any]) -> str:

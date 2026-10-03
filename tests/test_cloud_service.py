@@ -265,6 +265,19 @@ async def test_mcp_list_tools_names(aws, monkeypatch):
     assert "curiosity(知りたい)" in tools[0].description
 
 
+async def test_mcp_preload_tools_from_env(aws, monkeypatch):
+    """PETIT_PRELOAD_TOOLS に書いた道具だけ `anthropic/alwaysLoad`（一覧は petit-env の preload-tools.txt）。"""
+    for k, v in _env(aws).items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.setenv("CHARACTER_ID", PID)
+    monkeypatch.setattr(mcp_server, "_service", None)
+    monkeypatch.setenv("PETIT_PRELOAD_TOOLS", "satisfy_desire")
+    tools = await mcp_server.list_tools()
+    assert {t.name for t in tools if (t.meta or {}).get("anthropic/alwaysLoad")} == {"satisfy_desire"}
+    monkeypatch.delenv("PETIT_PRELOAD_TOOLS")
+    assert not any((t.meta or {}).get("anthropic/alwaysLoad") for t in await mcp_server.list_tools())
+
+
 def test_file_store_local_mode(tmp_path, monkeypatch):
     """表が無い手元・dev では desires.json（元の置き場）に同じ形で書く。"""
     env = {"PETIT_DATA_DIR": str(tmp_path)}
