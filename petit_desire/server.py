@@ -49,18 +49,21 @@ def _config(svc: DesireService | None):
 
 
 def _describe(svc: DesireService | None) -> str:
+    # 欲求は与えられたものではなく、自分で見つけて・書いて・従うもの（なぎさん 2026-10-12）。
+    # 「0.7 以上なら直ちに動け・0.5 を下回るまで続けよ」のような命令形はやめ、
+    # 「自分の欲求なので当たり前に従う。体感と違えば shape_desire で定義（増え方・減り方）を直す」の趣旨に。
     parts = [
-        "Get current desire levels (your mood right now). ",
-        "IMPORTANT: Act immediately on any desire with level >= 0.7 — decide yourself what to do to satisfy it. ",
+        "いまの欲求の高さ（自分の気分）を見る。これは自分の欲求なので、当たり前にそれに従って動く。",
+        "どれをどう満たすかは自分で決める。高いものから、で足りる。",
     ]
     cfg = _config(svc)
     if cfg is not None:
         for did, d in cfg.desires.items():
-            parts.append(f"{did}({d.name_ja}): {d.description}; ")
+            parts.append(f" {did}({d.name_ja}): {d.description};")
     parts.append(
-        "After acting, call satisfy_desire to record satisfaction. "
-        "Keep acting until level drops below 0.5. "
-        "Desires drive behavior - do not just report them."
+        " 満たしたら satisfy_desire で記録する。"
+        "値が自分の体感と合わないなら、それは定義のほうが違う。"
+        "shape_desire で名前・増え方・減り方を自分で直してよい（欲求は与えられるものではなく、自分で見つけるもの）。"
     )
     return "".join(parts)
 
