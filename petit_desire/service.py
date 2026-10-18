@@ -31,12 +31,15 @@ from desire_updater import DesireSystemConfig, parse_desire_config
 
 from .defaults import DEFAULT_DESIRE_CONFIG
 from .engine import Inputs, iso, nudge, parse_time, step, utcnow
+from .history import DynamoHistory, changes_of, format_history
 from .shape import MAX_DESIRES, ShapeError, apply_shape, check_name, new_spec, satisfy_amount_of, shape_of
 from .store import DynamoRowStore, FileRowStore, RowStore, region_from_env
 
 logger = logging.getLogger("petit-desire")
 
 WRITE_RETRIES = 5
+# ぷちたち。の受け箱の出来事の言い方（履歴用）
+SNS_WORDS = {"comment": "コメント", "like": "いいね", "touch": "なでなで", "snack": "おやつ"}
 SATISFY_AMOUNT = 0.4  # 元の server.py と同じ
 BOOST_MAX = 0.5  # 元の server.py と同じ
 STRONG = 0.7  # SOUL.md の行動原則「level >= 0.7 の強い欲求に従って行動する」
@@ -71,6 +74,22 @@ class DesireService:
     sns: Any = None  # .read(cursor) -> (events, cursor)
     stale_after: timedelta = timedelta(minutes=10)
     config_source: str = ""
+
+    @property
+    def history(self) -> DynamoHistory | None:
+        """欲求の履歴（akatsuki-petit#261）。house 表のときだけ。"""
+        table = getattr(self.store, "table", None) if isinstance(self.store, DynamoRowStore) else None
+        return DynamoHistory(table, self.pid) if table is not None else None
+
+    def _log(self, write: Callable[[DynamoHistory], None]) -> None:
+        """履歴を書く。書けなくても欲求の更新は止めない。"""
+        hist = self.history
+        if hist is None:
+            return
+        try:
+            write(hist)
+        except Exception as e:
+            logger.warning("history write failed: %s", type(e).__name__)
 
     # ── 組み立て ──
 
@@ -165,15 +184,57 @@ class DesireService:
 
     def update(self, now: datetime | None = None) -> tuple[dict[str, Any], Inputs]:
         now = now or utcnow()
-        inputs = self.gather(self.store.read(), now)
+        before = self.store.read()
+        inputs = self.gather(before, now)
         row = self._commit(lambda r: step(r, self.config_for(r), inputs, now))
+        self._log(lambda h: self._log_update(h, before, row, inputs, now))
         return row, inputs
 
+    def _log_update(self, hist: DynamoHistory, before: dict[str, Any] | None, row: dict[str, Any],
+                    inputs: Inputs, now: datetime) -> None:
+        """記憶・ぷちたち。で満たされた出来事と、1 時間に 1 回の値の写しを残す。"""
+        old_d, new_d = dict((before or {}).get("desires") or {}), dict(row.get("desires") or {})
+        old_e = (before or {}).get("engine") or {}
+        old_sat, new_sat = old_e.get("satisfied_at") or {}, (row.get("engine") or {}).get("satisfied_at") or {}
+        if isinstance(old_e.get("raw"), dict):  # 初回（過去の記憶をまとめて読む）は出来事にしない
+            by_mem = [n for n, at in new_sat.items() if at != old_sat.get(n)]
+            hist.add_event("記憶に残したことで満たされた", changes_of(old_d, new_d, by_mem), now)
+            last = parse_time(old_e.get("sns_last_at"))
+            fresh = [e for e in inputs.sns if last is not None and e.at > last]
+            if fresh:
+                cfg = self.config_for(row)
+                kinds: dict[str, int] = {}
+                names: set[str] = set()
+                for e in fresh:
+                    kinds[e.type] = kinds.get(e.type, 0) + 1
+                    names |= set(cfg.event_effects.get(e.type) or cfg.event_effects.get("*") or {})
+                what = "・".join(f"{SNS_WORDS.get(k, k)}×{n}" for k, n in kinds.items())
+                hist.add_event(f"ぷちたち。で反応があった（{what}）", changes_of(old_d, new_d, sorted(names)), now)
+        hist.snapshot({k: v for k, v in new_d.items() if k in self.config_for(row).desires}, now)
+
     def nudge(self, name: str, delta: float, *, satisfied: bool = False) -> dict[str, Any]:
-        if name not in self.config_for(self.store.read()).desires:
+        before = self.store.read()
+        if name not in self.config_for(before).desires:
             raise KeyError(name)
         now = utcnow()
-        return self._commit(lambda r: nudge(r, self.config_for(r), name, delta, now, satisfied=satisfied))
+        row = self._commit(lambda r: nudge(r, self.config_for(r), name, delta, now, satisfied=satisfied))
+        cause = "自分で満たした（satisfy_desire）" if satisfied else (
+            "驚き・新しさで強まった（boost_desire）" if delta > 0 else "自分で下げた")
+        self._log(lambda h: h.add_event(cause, changes_of(dict((before or {}).get("desires") or {}),
+                                                          dict(row.get("desires") or {}), [name]), now))
+        return row
+
+    def history_text(self, hours: float = 24, only: str = "") -> str:
+        """desire_history の中身。"""
+        hist = self.history
+        if hist is None:
+            return "欲求の履歴は、家（house 表）で暮らしているときだけ残る。"
+        hours = max(1.0, min(float(hours or 24), 24.0 * 3))
+        row = self.store.read()
+        snaps, events = hist.read(utcnow() - timedelta(hours=hours))
+        cfg = self.config_for(row)
+        labels = {k: d.name_ja for k, d in cfg.desires.items()}
+        return format_history(snaps, events, labels, self.levels(row), hours, (only or "").strip())
 
     def satisfy_amount(self, name: str, row: dict[str, Any] | None = None) -> float:
         cfg = self.config_for(row if row is not None else self.store.read())
