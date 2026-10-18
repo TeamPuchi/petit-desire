@@ -84,6 +84,22 @@ async def list_tools() -> list[Tool]:
             inputSchema={"type": "object", "properties": {}, "required": []},
         ),
         Tool(
+            name="desire_history",
+            description=(
+                "自分の欲求の履歴を見る。1 時間ごとの値の流れと、何で上がって何で下がったか"
+                "（撫でられた・記憶に残した・ぷちたち。の反応・satisfy_desire など）を 1 行ずつ。"
+                "出来事の無い上がり方は、時間がたったぶん。残っているのは 3 日ぶん。"
+            ),
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "hours": {"type": "number", "description": "何時間さかのぼるか（1〜72。省けば 24）"},
+                    "desire_name": {"type": "string", "description": f"1 つだけ見たいときの名前: {names}"},
+                },
+                "required": [],
+            },
+        ),
+        Tool(
             name="satisfy_desire",
             description=(
                 "Satisfy a desire after taking an action. Pass the desire_name you just acted on. "
@@ -181,6 +197,9 @@ def call_tool_sync(name: str, arguments: dict[str, Any]) -> str:
 
     if name == "get_desires":
         return svc.format(svc.current(refresh_if_stale=True))
+
+    if name == "desire_history":
+        return svc.history_text(arguments.get("hours") or 24, str(arguments.get("desire_name") or ""))
 
     if name == "shape_desire":
         desire = str(arguments.get("desire_name", "")).strip()

@@ -260,8 +260,8 @@ async def test_mcp_list_tools_names(aws, monkeypatch):
     monkeypatch.setenv("CHARACTER_ID", PID)
     monkeypatch.setattr(mcp_server, "_service", None)
     tools = await mcp_server.list_tools()
-    assert [t.name for t in tools] == ["get_desires", "satisfy_desire", "boost_desire", "shape_desire",
-                                       "retire_desire"]
+    assert [t.name for t in tools] == ["get_desires", "desire_history", "satisfy_desire", "boost_desire",
+                                       "shape_desire", "retire_desire"]
     assert "curiosity(知りたい)" in tools[0].description
 
 
@@ -457,3 +457,49 @@ def test_get_desires_shows_unread_touches_next_to_nade(aws, monkeypatch):
     assert aws["table"].get_item(Key=key)["Item"]["touch_unread"] == 3
     aws["table"].update_item(Key=key, UpdateExpression="SET touch_unread = :z", ExpressionAttributeValues={":z": 0})
     assert "まだ読んでいない" not in mcp_server.call_tool_sync("get_desires", {})
+
+
+def test_desire_history_shows_hourly_flow_and_causes(aws, monkeypatch):
+    """akatsuki-petit#261: 1 時間ごとの値と、何で下がったか（satisfy_desire・家 API の出来事）を澪が引ける。"""
+    from petit_desire import history as hist_mod
+
+    svc = _svc(aws, monkeypatch)
+    svc.update()
+    out = mcp_server.call_tool_sync("satisfy_desire", {"desire_name": "curiosity", "amount": 0.1})
+    assert out.startswith("[満足]")
+    # 家 API（petit-api desires_store.log_event）が同じ形で書く出来事
+    aws["table"].put_item(Item={"pk": f"P#{PID}", "sk": "DLOG#E#2099-01-01T00:00:00Z#0001",
+                                "at": hist_mod._iso(datetime.now(timezone.utc)), "cause": "体: 頭を撫でられた",
+                                "changes": {"miss_companion": {"from": Decimal("0.5"), "to": Decimal("0.45")}}})
+    text = mcp_server.call_tool_sync("desire_history", {})
+    assert "## 知りたい（curiosity）" in text and "自分で満たした（satisfy_desire）" in text
+    assert "体: 頭を撫でられた: 0.50 → 0.45" in text
+    assert "- 流れ: " in text and "いま " in text
+    only = mcp_server.call_tool_sync("desire_history", {"desire_name": "知りたい"})
+    assert "知りたい" in only and "会いたい" not in only
+    # 値の写しは 1 時間に 1 つ
+    snaps = aws["table"].query(KeyConditionExpression="pk = :p AND begins_with(sk, :s)",
+                               ExpressionAttributeValues={":p": f"P#{PID}", ":s": "DLOG#S#"})["Items"]
+    svc.update()
+    snaps2 = aws["table"].query(KeyConditionExpression="pk = :p AND begins_with(sk, :s)",
+                                ExpressionAttributeValues={":p": f"P#{PID}", ":s": "DLOG#S#"})["Items"]
+    assert len(snaps) == len(snaps2) == 1
+
+
+def test_desire_history_keeps_three_days(aws, monkeypatch):
+    from petit_desire.history import DynamoHistory
+
+    svc = _svc(aws, monkeypatch)
+    h = DynamoHistory(aws["table"], PID)
+    now = datetime.now(timezone.utc)
+    h.add_event("古い", {"curiosity": {"from": 0.5, "to": 0.4}}, now - timedelta(days=4))
+    h.add_event("新しい", {"curiosity": {"from": 0.5, "to": 0.4}}, now - timedelta(days=1))
+    aws["table"].put_item(Item={"pk": f"P#{PID}", "sk": "DLOG#S#2000-01-01T00", "at": "2000-01-01T00:00:00Z",
+                                "desires": {}})
+    assert h.snapshot({"curiosity": 0.5}, now) is True
+    left = [it["sk"] for it in aws["table"].query(
+        KeyConditionExpression="pk = :p AND begins_with(sk, :s)",
+        ExpressionAttributeValues={":p": f"P#{PID}", ":s": "DLOG#"})["Items"]]
+    assert len(left) == 2 and not any("2000-01-01" in sk for sk in left)
+    svc.update()
+    assert svc.history_text(72).count("新しい") == 1 and "古い" not in svc.history_text(72)
