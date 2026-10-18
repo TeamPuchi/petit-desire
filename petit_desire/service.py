@@ -56,6 +56,11 @@ def load_config(pid: str, data_dir: Path, env: dict[str, str] | None = None) -> 
     return parse_desire_config(DEFAULT_DESIRE_CONFIG, companion), "defaults"
 
 
+def _is_nade(name: str, label: str) -> bool:
+    """撫でられたい（触れ合いの欲求）か。ぷちが自分で足した欲求なので、キーか表示の名前で見る（撫/な は同じ）。"""
+    return any(str(x).strip().replace("撫", "な") == "なでられたい" for x in (name, label))
+
+
 @dataclass
 class DesireService:
     pid: str
@@ -281,6 +286,11 @@ class DesireService:
         order = sorted(levels, key=lambda k: (-levels[k], cfg.priority.index(k)
                                                if k in cfg.priority else 99))
         mine = {k for k, v in shape_of(row).items() if not v.get("retired")}
+        # 家 API が数える、まだ読んでいない触れ合い（akatsuki-petit#262。petit-api desires_store.UNREAD_ATTR）
+        try:
+            touch_unread = int((row or {}).get("touch_unread") or 0)
+        except (TypeError, ValueError):
+            touch_unread = 0
         dominant = order[0]
         lines = []
         if not compact:
@@ -298,7 +308,10 @@ class DesireService:
             if not compact:
                 own = "・自分で決めた形" if k in mine else ""
                 how = f"（満たすと −{satisfy_amount_of(d):g}・0→1 まで {d.satisfaction_hours:g} 時間{own}）"
-            lines.append(f"  {labels.get(k, k)}（{k}）: [{bar}] {v:.3f}{mark}{how}" + (f" … {desc}" if desc else ""))
+            unread = ""
+            if touch_unread and _is_nade(k, labels.get(k, "")):
+                unread = f"（まだ読んでいない、触られた・撫でられた {touch_unread} 回。house の body_since で読むと受け取れる）"
+            lines.append(f"  {labels.get(k, k)}（{k}）: [{bar}] {v:.3f}{mark}{unread}{how}" + (f" … {desc}" if desc else ""))
         strong = [k for k in order if levels[k] >= STRONG]
         lines.append("")
         if strong:

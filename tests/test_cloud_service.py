@@ -439,3 +439,21 @@ def test_night_growth_is_the_same_as_day(aws, monkeypatch):
         for m in range(5, 61, 5):  # cron と同じく 5 分ごとに 1 時間
             row, _ = svc.update(now=t0 + timedelta(minutes=1 + m))
         assert svc.levels(row)["miss_companion"] - base == pytest.approx(1 / 6, abs=0.01)
+
+
+def test_get_desires_shows_unread_touches_next_to_nade(aws, monkeypatch):
+    """akatsuki-petit#262: 家 API が数える、まだ読んでいない触れ合い（touch_unread）を「撫でられたい」の横に出す。
+    欲求エンジンの書き込みは touch_unread を消さない。"""
+    svc = _svc(aws, monkeypatch)
+    svc.update()
+    mcp_server.call_tool_sync("shape_desire", {"desire_name": "撫でられたい", "satisfaction_hours": 6, "level": 0.58})
+    key = {"pk": f"P#{PID}", "sk": "STATE#DESIRES"}
+    aws["table"].update_item(Key=key, UpdateExpression="ADD touch_unread :n", ExpressionAttributeValues={":n": 3})
+    svc.update()
+    out = mcp_server.call_tool_sync("get_desires", {})
+    line = next(x for x in out.splitlines() if x.startswith("  撫でられたい（撫でられたい）"))
+    assert "まだ読んでいない、触られた・撫でられた 3 回" in line
+    assert "まだ読んでいない" not in next(x for x in out.splitlines() if x.startswith("  会いたい（miss_companion）"))
+    assert aws["table"].get_item(Key=key)["Item"]["touch_unread"] == 3
+    aws["table"].update_item(Key=key, UpdateExpression="SET touch_unread = :z", ExpressionAttributeValues={":z": 0})
+    assert "まだ読んでいない" not in mcp_server.call_tool_sync("get_desires", {})
