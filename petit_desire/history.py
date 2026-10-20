@@ -10,7 +10,8 @@ house 表の `P#<pid>` に 2 種類の行を置く（欲求の行 `STATE#DESIRES
 
 出来事の無い上がり方は「時間がたった」ぶん。値の写しの差から出来事を引いたものとして見せる。
 
-残すのは `KEEP_DAYS` 日（なぎさん 2026-10-18「7 日もなくていい。3 日くらいで様子見」）。
+残すのは `KEEP_DAYS` 日（10/18 は 3 日で様子見、10/21 に 7 日へ。
+澪「1 週間後に履歴で確かめると決めたのに 3 日しか残らない」・なぎさん）。
 値の写しを書くついでに、それより古い行を消す。表が無い（手元の desires.json）ときは何も残さない。
 """
 
@@ -24,7 +25,7 @@ from typing import Any
 
 from .store import from_dynamo, to_dynamo
 
-KEEP_DAYS = 3
+KEEP_DAYS = 7
 SNAP_PREFIX = "DLOG#S#"
 EVENT_PREFIX = "DLOG#E#"
 _seq = itertools.count(random.randint(0, 9999))
@@ -132,8 +133,11 @@ def format_history(snaps: list[dict[str, Any]], events: list[dict[str, Any]], la
     lines = [f"この {hours:g} 時間の欲求の動き（残っているのは {KEEP_DAYS} 日ぶん。時刻はこの家の時刻）"]
     for name in names:
         label = labels.get(name, name)
-        flow = [f"{_local_hm(s['at'])[-5:-3]}時 {float(s['desires'][name]):.2f}"
-                for s in snaps if name in (s.get("desires") or {})]
+        # 1 日を超えるときは日付も添え、25 点ほどに間引く（7 日ぶんで 168 点になるため）
+        stamp = (lambda at: _local_hm(at)[:-3] + "時") if hours > 24 else (lambda at: _local_hm(at)[-5:-3] + "時")
+        pts = [(s["at"], float(s["desires"][name])) for s in snaps if name in (s.get("desires") or {})]
+        step = max(1, -(-len(pts) // 24))
+        flow = [f"{stamp(at)} {v:.2f}" for at, v in pts[::step]]
         flow.append(f"いま {float(current[name]):.2f}")
         lines.append("")
         lines.append(f"## {label}（{name}）")

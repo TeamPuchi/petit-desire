@@ -32,7 +32,7 @@ from desire_updater import DesireSystemConfig, parse_desire_config
 from .actions import ACTION_SHARE, CHAT, actions_of, count_actions, deltas_for, words_of
 from .defaults import DEFAULT_DESIRE_CONFIG
 from .engine import Inputs, iso, nudge, parse_time, step, utcnow
-from .history import DynamoHistory, changes_of, format_history
+from .history import KEEP_DAYS, DynamoHistory, changes_of, format_history
 from .shape import MAX_DESIRES, ShapeError, apply_shape, check_name, new_spec, satisfy_amount_of, shape_of
 from .store import DynamoRowStore, FileRowStore, RowStore, region_from_env
 
@@ -236,7 +236,7 @@ class DesireService:
         hist = self.history
         if hist is None:
             return "欲求の履歴は、家（house 表）で暮らしているときだけ残る。"
-        hours = max(1.0, min(float(hours or 24), 24.0 * 3))
+        hours = max(1.0, min(float(hours or 24), 24.0 * KEEP_DAYS))
         row = self.store.read()
         snaps, events = hist.read(utcnow() - timedelta(hours=hours))
         cfg = self.config_for(row)

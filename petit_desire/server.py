@@ -88,12 +88,12 @@ async def list_tools() -> list[Tool]:
             description=(
                 "自分の欲求の履歴を見る。1 時間ごとの値の流れと、何で上がって何で下がったか"
                 "（撫でられた・記憶に残した・ぷちたち。の反応・satisfy_desire など）を 1 行ずつ。"
-                "出来事の無い上がり方は、時間がたったぶん。残っているのは 3 日ぶん。"
+                "出来事の無い上がり方は、時間がたったぶん。残っているのは 7 日ぶん。"
             ),
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "hours": {"type": "number", "description": "何時間さかのぼるか（1〜72。省けば 24）"},
+                    "hours": {"type": "number", "description": "何時間さかのぼるか（1〜168。省けば 24）"},
                     "desire_name": {"type": "string", "description": f"1 つだけ見たいときの名前: {names}"},
                 },
                 "required": [],
