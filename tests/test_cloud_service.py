@@ -497,8 +497,8 @@ def test_desire_history_keeps_three_days(aws, monkeypatch):
     svc = _svc(aws, monkeypatch)
     h = DynamoHistory(aws["table"], PID)
     now = datetime.now(timezone.utc)
-    h.add_event("古い", {"curiosity": {"from": 0.5, "to": 0.4}}, now - timedelta(days=4))
-    h.add_event("新しい", {"curiosity": {"from": 0.5, "to": 0.4}}, now - timedelta(days=1))
+    h.add_event("古い", {"curiosity": {"from": 0.5, "to": 0.4}}, now - timedelta(days=8))
+    h.add_event("新しい", {"curiosity": {"from": 0.5, "to": 0.4}}, now - timedelta(days=6))
     aws["table"].put_item(Item={"pk": f"P#{PID}", "sk": "DLOG#S#2000-01-01T00", "at": "2000-01-01T00:00:00Z",
                                 "desires": {}})
     assert h.snapshot({"curiosity": 0.5}, now) is True
@@ -507,7 +507,7 @@ def test_desire_history_keeps_three_days(aws, monkeypatch):
         ExpressionAttributeValues={":p": f"P#{PID}", ":s": "DLOG#"})["Items"]]
     assert len(left) == 2 and not any("2000-01-01" in sk for sk in left)
     svc.update()
-    assert svc.history_text(72).count("新しい") == 1 and "古い" not in svc.history_text(72)
+    assert svc.history_text(168).count("新しい") == 1 and "古い" not in svc.history_text(168)
 
 
 def test_actions_satisfy_desires_automatically(aws, monkeypatch):
@@ -602,3 +602,15 @@ def test_hourly_snapshot_keeps_desires_the_petit_added(aws, monkeypatch):
         svc.update(t)
     flow = svc.history_text(24, "残したい").split("流れ:")[1].splitlines()[0]
     assert flow.count("時 ") == 2 and "いま" in flow
+
+
+def test_week_long_flow_is_thinned_and_dated():
+    """7 日ぶん（168 点）の流れは 25 点ほどに間引き、日付も添える（澪 10/21「1 週間後に履歴で確かめる」）。"""
+    from petit_desire.history import format_history
+
+    t0 = datetime(2026, 10, 14, 0, 0, tzinfo=timezone.utc)
+    snaps = [{"at": (t0 + timedelta(hours=h)).strftime("%Y-%m-%dT%H:%M:%SZ"), "desires": {"curiosity": 0.5}}
+             for h in range(168)]
+    flow = format_history(snaps, [], {"curiosity": "知りたい"}, {"curiosity": 0.4}, 168).split("流れ:")[1]
+    flow = flow.splitlines()[0]
+    assert 20 <= flow.count("→") <= 26 and "/" in flow.split("→")[0]
