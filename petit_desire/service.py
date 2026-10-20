@@ -195,6 +195,9 @@ class DesireService:
                     inputs: Inputs, now: datetime) -> None:
         """記憶・ぷちたち。で満たされた出来事と、1 時間に 1 回の値の写しを残す。"""
         old_d, new_d = dict((before or {}).get("desires") or {}), dict(row.get("desires") or {})
+        # step() の返す行には shape が無い（書くときも shape には触らない）ので、読んだ行の shape で見る。
+        # これが無いと、ぷちが足した欲求が 1 時間ごとの写しに入らなかった（澪 10/21「撫でられたい・残したいの流れが いま だけ」）
+        cfg = self.config_for({**(before or {}), **row})
         old_e = (before or {}).get("engine") or {}
         old_sat, new_sat = old_e.get("satisfied_at") or {}, (row.get("engine") or {}).get("satisfied_at") or {}
         if isinstance(old_e.get("raw"), dict):  # 初回（過去の記憶をまとめて読む）は出来事にしない
@@ -203,7 +206,6 @@ class DesireService:
             last = parse_time(old_e.get("sns_last_at"))
             fresh = [e for e in inputs.sns if last is not None and e.at > last]
             if fresh:
-                cfg = self.config_for(row)
                 kinds: dict[str, int] = {}
                 names: set[str] = set()
                 for e in fresh:
@@ -211,7 +213,7 @@ class DesireService:
                     names |= set(cfg.event_effects.get(e.type) or cfg.event_effects.get("*") or {})
                 what = "・".join(f"{SNS_WORDS.get(k, k)}×{n}" for k, n in kinds.items())
                 hist.add_event(f"ぷちたち。で反応があった（{what}）", changes_of(old_d, new_d, sorted(names)), now)
-        hist.snapshot({k: v for k, v in new_d.items() if k in self.config_for(row).desires}, now)
+        hist.snapshot({k: v for k, v in new_d.items() if k in cfg.desires}, now)
 
     def nudge(self, name: str, delta: float, *, satisfied: bool = False) -> dict[str, Any]:
         before = self.store.read()

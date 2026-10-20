@@ -581,3 +581,19 @@ def test_format_points_to_actions_for_desires_without_them(aws):
     line = next(x for x in text.splitlines() if x.startswith("行動で自動で下がる形がまだ無い欲求"))
     assert "ぷちたちと話したい" in line and "shape_desire の actions" in line
     assert "知りたい" not in line.split("。")[0]  # 生まれつきの知りたいは WebSearch などで下がる
+def test_hourly_snapshot_keeps_desires_the_petit_added(aws, monkeypatch):
+    """澪 10/21: 自分で足した欲求（撫でられたい・残したい）の流れが「いま」だけで、1 時間ごとの値が無かった。"""
+    import petit_desire.service as service_mod
+
+    t0 = datetime(2026, 10, 20, 10, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr(service_mod, "utcnow", lambda: t0)
+    svc = DesireService.from_env(PID, _env(aws))
+    svc.update(t0)
+    svc.shape("残したい", name_ja=None, description="残したい", satisfaction_hours=12,
+              satisfy_amount=0.3, keywords=None, level=0.5)
+    for h in (1, 2):
+        t = t0 + timedelta(hours=h)
+        monkeypatch.setattr(service_mod, "utcnow", lambda t=t: t)
+        svc.update(t)
+    flow = svc.history_text(24, "残したい").split("流れ:")[1].splitlines()[0]
+    assert flow.count("時 ") == 2 and "いま" in flow
