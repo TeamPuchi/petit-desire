@@ -1,5 +1,5 @@
-# 写し: TeamPuchi/petit-memory src/memory_mcp/crypto_shred.py（commit 50a43a8）。形を変えずに使う。
-# 記憶の本文（sealed）を、このプロセスの中だけで開いて欲求のキーワードに当てるために読む（書かない・消さない）。
+# 写し: TeamPuchi/petit-memory src/memory_mcp/crypto_shred.py（commit 9b06827・akatsuki-petit#190 の KEK）。形を変えずに使う。
+# 記憶の本文（sealed）を、このプロセスの中だけで開いて欲求のキーワードに当てるために読む。
 """暗号シュレッダー（crypto-shredding）の部品。
 
 「忘れる」をバックアップや PITR からも戻せない形にするための仕組み。
@@ -9,16 +9,31 @@ petit-memory の DynamoDB 実装が使うほか、他のリポ（会話ログ `M
 ## 仕組み
 
 1. 項目 1 件ごとにデータ鍵（DEK, 256 bit）を作り、本文を AES-256-GCM で暗号化する。
-2. DEK は KMS の鍵（env ごとに 1 本の CMK）で包み、**別の「鍵の表」**に置く。
-   包むときの暗号化コンテキストは `{"pid": <pid>}`。KMS の鍵ポリシーはこの pid と
+2. DEK はぷち 1 体に 1 本の鍵（KEK, 256 bit）で AES-256-GCM で包み、**別の「鍵の表」**に置く。
+   KEK だけを KMS の鍵（env ごとに 1 本の CMK）で包んで同じ鍵の表に置く（sk `KEK`）。
+   KMS で包むときの暗号化コンテキストは `{"pid": <pid>}`。KMS の鍵ポリシーはこの pid と
    呼び出し元ロールの組でしか Decrypt を通さない（petit-infra 側）。
+   KMS を呼ぶのは、プロセスがそのぷちの KEK をはじめて使うときの `Decrypt` 1 回だけ
+   （KEK がまだ無ければ `GenerateDataKey` 1 回）。記憶の読み書きでは KMS を呼ばない
+   （akatsuki-petit#190。前は 1 件ごとに `GenerateDataKey`、未キャッシュの 1 件ごとに `Decrypt` で、
+   無料枠 2 万回/月を月の 8 日で使い切っていた）。
 3. 忘れる＝鍵の表からその項目の DEK を消す。鍵の表は PITR 無効・毎晩バックアップの対象外。
-   本体の表を PITR や S3 から戻しても、DEK がもう無いので誰にも読めない。
+   本体の表を PITR や S3 から戻しても、DEK がもう無いので誰にも読めない（KEK が残っていても、
+   包まれた DEK そのものが無いので戻らない）。
+
+### 前の形（DEK を KMS で直接包んだ行）
+
+#190 より前に書いた行の `wrapped` は KMS の CiphertextBlob のまま。読むときは KMS で解き、
+その場で KEK で包み直して置き直す（行がまだあるときだけ。忘れた行を生き返らせない）。
+一度読まれた行は以後 KMS を呼ばない。
 
 ## 鍵の表の形
 
 - 表名は環境ごと（例 `petit-<env>-memory-keys`）。
-- `pk` = `P#<pid>`、`sk` = `KEY#<item id>`、属性 `wrapped`（Binary、KMS の CiphertextBlob）と `created_at`。
+- `pk` = `P#<pid>`、`sk` = `KEY#<item id>`、属性 `wrapped`（Binary）と `created_at`。
+- `wrapped` = `b"PKEK1"` || nonce(12 byte) || AES-256-GCM(DEK || tag)、AAD は `"<pid>|kek|<item id>"`
+  （別の行・別のぷちの包みを貼り替えても解けない）。先頭が `PKEK1` でなければ前の形（KMS の CiphertextBlob）。
+- KEK の行: `sk` = `KEK`、属性 `wrapped`（KMS の CiphertextBlob）と `created_at`。
 
 ## 暗号文の形（他言語で読み書きするときの約束）
 
@@ -31,7 +46,7 @@ petit-memory の DynamoDB 実装が使うほか、他のリポ（会話ログ `M
 
 ## 平文の置き場所
 
-復号した DEK はこのプロセスのメモリ（`_DekCache`）にだけ持つ。ディスクには書かない。
+復号した KEK と DEK はこのプロセスのメモリ（`_kek`・`_DekCache`）にだけ持つ。ディスクには書かない。
 """
 
 from __future__ import annotations
@@ -48,9 +63,16 @@ NONCE_BYTES = 12
 DEK_BYTES = 32
 
 KEY_SK_PREFIX = "KEY#"
+KEK_SK = "KEK"
+KEK_WRAP_MAGIC = b"PKEK1"
 
 _BATCH_GET_LIMIT = 100
 _DEFAULT_CACHE_SIZE = 20000
+
+
+def _error_code(exc: Exception) -> str:
+    response = getattr(exc, "response", None) or {}
+    return str(response.get("Error", {}).get("Code", ""))
 
 
 class ShreddedError(LookupError):
@@ -90,14 +112,14 @@ def open_json(dek: bytes, blob: bytes, aad: str) -> Any:
 
 
 class DataKeyWrapper(Protocol):
-    """DEK を作って包む／包みを解く口。本番は KMS、試験は moto の KMS。"""
+    """KEK を作って包む／包みを解く口（前の形の行では DEK も）。本番は KMS、試験は moto の KMS。"""
 
     def generate(self, pid: str) -> tuple[bytes, bytes]:
-        """(平文の DEK, 包んだ DEK) を返す。"""
+        """(平文の鍵, 包んだ鍵) を返す。"""
         ...
 
     def unwrap(self, wrapped: bytes, pid: str) -> bytes:
-        """包んだ DEK を解く。"""
+        """包んだ鍵を解く。"""
         ...
 
 
@@ -201,6 +223,8 @@ class CryptoShredder:
             dynamodb_client = boto3.client("dynamodb")
         self._client = dynamodb_client
         self._cache = _DekCache(cache_size)
+        self._kek: bytes | None = None
+        self._kek_lock = threading.Lock()
 
     @classmethod
     def from_env(cls, pid: str) -> CryptoShredder | None:
@@ -232,11 +256,88 @@ class CryptoShredder:
     def _key(self, item_id: str) -> dict[str, Any]:
         return {"pk": {"S": self.partition_key}, "sk": {"S": self.key_sk(item_id)}}
 
+    # ── KEK（ぷち 1 体に 1 本。KMS で包んで鍵の表に置く）──
+
+    def _kek_key(self) -> dict[str, Any]:
+        return {"pk": {"S": self.partition_key}, "sk": {"S": KEK_SK}}
+
+    def kek(self) -> bytes:
+        """平文の KEK。プロセスで最初の 1 回だけ KMS を呼ぶ（無ければ作って置く）。"""
+        if self._kek is not None:
+            return self._kek
+        with self._kek_lock:
+            if self._kek is not None:
+                return self._kek
+            item = self._client.get_item(TableName=self._table_name, Key=self._kek_key(), ConsistentRead=True).get(
+                "Item"
+            )
+            if item is None:
+                kek, wrapped = self._wrapper.generate(self._pid)
+                try:
+                    self._client.put_item(
+                        TableName=self._table_name,
+                        Item={
+                            **self._kek_key(),
+                            "wrapped": {"B": wrapped},
+                            "created_at": {"S": datetime.now(timezone.utc).isoformat()},
+                        },
+                        ConditionExpression="attribute_not_exists(sk)",
+                    )
+                except Exception as exc:  # 別のプロセスが先に置いた → そちらを使う
+                    if _error_code(exc) != "ConditionalCheckFailedException":
+                        raise
+                    item = self._client.get_item(TableName=self._table_name, Key=self._kek_key(), ConsistentRead=True)[
+                        "Item"
+                    ]
+                    kek = self._wrapper.unwrap(bytes(item["wrapped"]["B"]), self._pid)
+            else:
+                kek = self._wrapper.unwrap(bytes(item["wrapped"]["B"]), self._pid)
+            self._kek = kek
+            return kek
+
+    def _kek_aad(self, item_id: str) -> bytes:
+        return f"{self._pid}|kek|{item_id}".encode("utf-8")
+
+    def _wrap(self, item_id: str, dek: bytes) -> bytes:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+        nonce = os.urandom(NONCE_BYTES)
+        return KEK_WRAP_MAGIC + nonce + AESGCM(self.kek()).encrypt(nonce, dek, self._kek_aad(item_id))
+
+    def _unwrap(self, item_id: str, wrapped: bytes) -> bytes:
+        """包んだ DEK を解く。前の形（KMS の包み）なら KMS で解いて KEK で包み直す。"""
+        if wrapped.startswith(KEK_WRAP_MAGIC):
+            from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+            body = wrapped[len(KEK_WRAP_MAGIC) :]
+            return AESGCM(self.kek()).decrypt(body[:NONCE_BYTES], body[NONCE_BYTES:], self._kek_aad(item_id))
+        dek = self._wrapper.unwrap(wrapped, self._pid)
+        self._rewrap(item_id, wrapped, dek)
+        return dek
+
+    def _rewrap(self, item_id: str, old_wrapped: bytes, dek: bytes) -> None:
+        """前の形の行を KEK の包みに置き直す。行が消えた・変わったなら何もしない（忘れた行を戻さない）。"""
+        try:
+            self._client.put_item(
+                TableName=self._table_name,
+                Item={
+                    **self._key(item_id),
+                    "wrapped": {"B": self._wrap(item_id, dek)},
+                    "created_at": {"S": datetime.now(timezone.utc).isoformat()},
+                },
+                ConditionExpression="#w = :old",  # wrapped は予約語
+                ExpressionAttributeNames={"#w": "wrapped"},
+                ExpressionAttributeValues={":old": {"B": old_wrapped}},
+            )
+        except Exception:  # 置き直しはついで。失敗しても読みは止めない（次に読むときまた試す）
+            pass
+
     # ── 作る・読む・消す ──
 
     def new_key(self, item_id: str) -> bytes:
         """DEK を作り、包んで鍵の表に置き、平文の DEK を返す。本体を書く**前に**呼ぶ。"""
-        dek, wrapped = self._wrapper.generate(self._pid)
+        dek = os.urandom(DEK_BYTES)
+        wrapped = self._wrap(item_id, dek)
         self._client.put_item(
             TableName=self._table_name,
             Item={
@@ -257,7 +358,7 @@ class CryptoShredder:
         item = response.get("Item")
         if item is None:
             return None
-        dek = self._wrapper.unwrap(bytes(item["wrapped"]["B"]), self._pid)
+        dek = self._unwrap(item_id, bytes(item["wrapped"]["B"]))
         self._cache.put(item_id, dek)
         return dek
 
@@ -292,7 +393,7 @@ class CryptoShredder:
                 response = self._client.batch_get_item(RequestItems=request)
                 for raw in response.get("Responses", {}).get(self._table_name, []):
                     item_id = raw["sk"]["S"][len(KEY_SK_PREFIX) :]
-                    dek = self._wrapper.unwrap(bytes(raw["wrapped"]["B"]), self._pid)
+                    dek = self._unwrap(item_id, bytes(raw["wrapped"]["B"]))
                     self._cache.put(item_id, dek)
                     result[item_id] = dek
                 unprocessed = response.get("UnprocessedKeys") or {}
