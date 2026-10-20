@@ -570,3 +570,14 @@ def test_memory_keys_in_both_kek_and_old_kms_form_open(aws):
     assert sorted(m.content for m in inputs.memories) == ["なぎと話した", "空を調べた"]
     assert row["desires"]["miss_companion"] == pytest.approx(1 / 6, abs=1e-2)
     assert row["desires"]["curiosity"] == pytest.approx(0.125, abs=1e-2)
+
+
+def test_format_points_to_actions_for_desires_without_them(aws):
+    svc = DesireService.from_env(PID, _env(aws))
+    svc.update()
+    svc.shape("ぷちたちと話したい", name_ja=None, description="ぷちたちと話したい", satisfaction_hours=12,
+              satisfy_amount=0.3, keywords=None, level=0.9)
+    text = svc.format(svc.store.read())
+    line = next(x for x in text.splitlines() if x.startswith("行動で自動で下がる形がまだ無い欲求"))
+    assert "ぷちたちと話したい" in line and "shape_desire の actions" in line
+    assert "知りたい" not in line.split("。")[0]  # 生まれつきの知りたいは WebSearch などで下がる
