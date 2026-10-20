@@ -417,6 +417,14 @@ class DesireService:
             )
         else:
             lines.append("強い欲求（0.7 以上）は無い。いつもの自分のペースで過ごしてよい。")
+        no_act = [k for k in order if not actions_of(k, cfg.desires[k])]
+        if no_act and not compact:
+            # 澪 10/21「shape_desire に actions が見えず、ぷちたちと話したい・進みたいを下げる行動を決められない」
+            lines.append(
+                "行動で自動で下がる形がまだ無い欲求: " + "、".join(labels.get(k, k) for k in no_act)
+                + "。shape_desire の actions に道具の名前（sns_comment・board_post・WebSearch など）か"
+                " chat（会話の 1 往復）を渡すと、その行動で少しずつ下がる。"
+            )
         sensors = ((row or {}).get("engine") or {}).get("sensors") or {}
         if sensors and not compact:
             lines.append("")
