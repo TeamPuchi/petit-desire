@@ -545,3 +545,28 @@ def test_petit_decides_its_own_actions(aws, monkeypatch):
     mcp_server.call_tool_sync("shape_desire", {"desire_name": "curiosity", "actions": []})
     assert svc.act(["WebSearch"]) == (None, {})
     assert "空白" in mcp_server.call_tool_sync("shape_desire", {"desire_name": "curiosity", "actions": ["Web Search"]})
+
+
+def test_memory_keys_in_both_kek_and_old_kms_form_open(aws):
+    """akatsuki-petit#190 で記憶 MCP が DEK を KEK で包むようになった（先頭 PKEK1）。欲求エンジンも同じ形を読み、
+    前の形（KMS で直接包んだ行）も読める（なぎさん 2026-10-20「直して」）。"""
+    now = datetime.now(timezone.utc)
+    _put_memory(aws, "new", now - timedelta(hours=1), "なぎと話した")  # KEK の形
+    keys = boto3.client("dynamodb", region_name=REGION)
+    wrapped = keys.get_item(TableName=KEYS, Key={"pk": {"S": f"P#{PID}"}, "sk": {"S": "KEY#new"}})["Item"]
+    assert bytes(wrapped["wrapped"]["B"]).startswith(b"PKEK1")
+    # 前の形: DEK を KMS で直接包んで置いた行
+    kms = boto3.client("kms", region_name=REGION)
+    got = kms.generate_data_key(KeyId=aws["key_id"], KeySpec="AES_256", EncryptionContext={"pid": PID})
+    old_dek = got["Plaintext"]
+    keys.put_item(TableName=KEYS, Item={"pk": {"S": f"P#{PID}"}, "sk": {"S": "KEY#old"},
+                                        "wrapped": {"B": got["CiphertextBlob"]}, "created_at": {"S": "x"}})
+    ts = _iso(now - timedelta(minutes=30))
+    aws["table"].put_item(Item={"pk": f"P#{PID}", "sk": f"MEM#{ts}#old", "id": "old", "timestamp": ts,
+                                "category": "daily", "enc_v": 1,
+                                "sealed": seal_json(old_dek, {"content": "空を調べた"}, f"{PID}|old|mem")})
+    svc = DesireService.from_env(PID, _env(aws))
+    row, inputs = svc.update(now)
+    assert sorted(m.content for m in inputs.memories) == ["なぎと話した", "空を調べた"]
+    assert row["desires"]["miss_companion"] == pytest.approx(1 / 6, abs=1e-2)
+    assert row["desires"]["curiosity"] == pytest.approx(0.125, abs=1e-2)
