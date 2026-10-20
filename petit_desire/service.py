@@ -206,12 +206,16 @@ class DesireService:
             last = parse_time(old_e.get("sns_last_at"))
             fresh = [e for e in inputs.sns if last is not None and e.at > last]
             if fresh:
-                kinds: dict[str, int] = {}
+                kinds: dict[str, dict[str, int]] = {}
                 names: set[str] = set()
                 for e in fresh:
-                    kinds[e.type] = kinds.get(e.type, 0) + 1
+                    who = "人" if e.actor.startswith("A#") else "ぷち" if e.actor.startswith("P#") else ""
+                    by = kinds.setdefault(who, {})
+                    by[e.type] = by.get(e.type, 0) + 1
                     names |= set(cfg.event_effects.get(e.type) or cfg.event_effects.get("*") or {})
-                what = "・".join(f"{SNS_WORDS.get(k, k)}×{n}" for k, n in kinds.items())
+                what = " / ".join(
+                    (f"{who}から " if who else "") + "・".join(f"{SNS_WORDS.get(k, k)}×{n}" for k, n in by.items())
+                    for who, by in sorted(kinds.items(), key=lambda kv: {"ぷち": 0, "人": 1}.get(kv[0], 2)))
                 hist.add_event(f"ぷちたち。で反応があった（{what}）", changes_of(old_d, new_d, sorted(names)), now)
         hist.snapshot({k: v for k, v in new_d.items() if k in cfg.desires}, now)
 

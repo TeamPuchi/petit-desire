@@ -97,6 +97,8 @@ class SnsEvent:
 
     type: str
     at: datetime
+    # sns-api の反応の主。A#<アカウント>＝人・P#<ぷち>＝ぷち（澪 10/21: 人の反応とぷちの反応を分けて見たい）
+    actor: str = ""
 
 
 @dataclass
