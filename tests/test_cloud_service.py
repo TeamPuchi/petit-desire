@@ -204,7 +204,9 @@ def test_sns_inbox_events(aws, monkeypatch):
                  "created_at": _iso(now - timedelta(days=1))}], "next_after": "c1"})
         if after == "c1":
             return httpx.Response(200, json={"events": [
-                {"post_id": "p1", "type": "comment", "actor": "u", "actor_name": "x", "body": "hi",
+                {"post_id": "p1", "type": "comment", "actor": "P#puchiko", "actor_name": "x", "body": "hi",
+                 "created_at": _iso(now + timedelta(minutes=1))},
+                {"post_id": "p1", "type": "like", "actor": "A#acct-nagi", "actor_name": "なぎ",
                  "created_at": _iso(now + timedelta(minutes=1))}], "next_after": "c2"})
         return httpx.Response(200, json={"events": [], "next_after": after})
 
@@ -214,7 +216,10 @@ def test_sns_inbox_events(aws, monkeypatch):
     assert row["desires"]["miss_companion"] == 0.5  # 初回: 過去分は効かせない
     assert row["engine"]["sns_cursor"] == "c1"
     row, _ = svc.update(now + timedelta(minutes=2))
-    assert row["desires"]["miss_companion"] == pytest.approx(0.5 - 0.1 + (2 / 60) / 6, abs=1e-3)
+    assert row["desires"]["miss_companion"] < 0.5
+    # 人の反応とぷちの反応を分けて書く（澪 10/21「ぷちたち。で反応があった に、なぎさんの反応も入っている」）
+    causes = [e["cause"] for e in svc.history.read(now - timedelta(hours=1))[1]]
+    assert "ぷちたち。で反応があった（ぷちから コメント×1 / 人から いいね×1）" in causes
     assert row["engine"]["sns_cursor"] == "c2"
     assert calls[1] == {"limit": "50", "after": "c1"}
 

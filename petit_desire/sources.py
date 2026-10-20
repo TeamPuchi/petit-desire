@@ -318,7 +318,7 @@ class SnsInboxSource:
                     for ev in got:
                         at = parse_time(ev.get("created_at"))
                         if at is not None and ev.get("type"):
-                            events.append(SnsEvent(type=str(ev["type"]), at=at))
+                            events.append(SnsEvent(type=str(ev["type"]), at=at, actor=str(ev.get("actor") or "")))
                     after = data.get("next_after") or after
                     if len(got) < self.PAGE:
                         break
