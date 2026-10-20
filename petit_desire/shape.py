@@ -10,6 +10,7 @@
         "satisfaction_hours": 6,          # 0 から 1 まで満ちるのにかかる時間（時間）
         "satisfy_amount": 0.2,            # satisfy_desire 1 回で下がる量
         "keywords": ["確かめた"],         # 記憶にこの言葉があれば満たされたと数える
+        "actions": ["WebSearch", "chat"], # この行動をしたら、自動で少し満たされたと数える（actions.py）
         "by": "petit", "at": "…Z",
       },
       "<名前>": {"retired": true, ...},   # 手放した（計算にも表示にも出さない。define しなおせば戻る）
@@ -29,6 +30,7 @@ from desire_updater import DesireConfig, DesireSystemConfig
 NAME_MAX = 24
 # 名前は日本語でよい（「確かめたい」）。表の Map のキーに使うので、空白と記号の一部だけ断る
 _BAD_NAME = re.compile(r"[\s.#$/\\\"'`{}\[\]<>]")
+_BAD_ACTION = re.compile(r"\s")
 HOURS_MIN, HOURS_MAX = 0.25, 24.0 * 14
 SATISFY_MIN, SATISFY_MAX = 0.05, 1.0
 MAX_DESIRES = 12  # 欲求の数の上限（生まれつきのものも含む）。多すぎると自律行動のプロンプトが膨らむ
@@ -76,6 +78,8 @@ def apply_shape(config: DesireSystemConfig, shape: dict[str, dict[str, Any]] | N
             base.satisfy_amount = float(spec["satisfy_amount"])
         if spec.get("keywords") is not None:
             base.keywords = [str(k) for k in spec["keywords"] if str(k).strip()]
+        if spec.get("actions") is not None:
+            base.actions = [str(a) for a in spec["actions"] if str(a).strip()]
         desires[name] = base
     cfg.desires = desires
     cfg.priority = [p for p in priority if p in desires] + [n for n in desires if n not in priority]
@@ -88,7 +92,8 @@ def satisfy_amount_of(d: DesireConfig) -> float:
 
 
 def new_spec(*, name_ja: str | None, description: str | None, satisfaction_hours: float | None,
-             satisfy_amount: float | None, keywords: list[str] | None) -> dict[str, Any]:
+             satisfy_amount: float | None, keywords: list[str] | None,
+             actions: list[str] | None = None) -> dict[str, Any]:
     """道具の引数から shape の 1 件を作る（範囲外は断る。省いたものは入れない＝前の値のまま）。"""
     spec: dict[str, Any] = {}
     if name_ja is not None and str(name_ja).strip():
@@ -114,4 +119,11 @@ def new_spec(*, name_ja: str | None, description: str | None, satisfaction_hours
         if len(kws) > 20:
             raise ShapeError("keywords は 20 個まで")
         spec["keywords"] = kws
+    if actions is not None:
+        acts = [str(a).strip() for a in actions if str(a).strip()]
+        if len(acts) > 20:
+            raise ShapeError("actions は 20 個まで")
+        if any(len(a) > 60 or _BAD_ACTION.search(a) for a in acts):
+            raise ShapeError("actions は道具の名前（WebSearch・book_read・sns_comment など）か chat。空白は使えない")
+        spec["actions"] = acts
     return spec

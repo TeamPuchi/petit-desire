@@ -2,6 +2,8 @@
 
 - `desire-updater <id>` … 5 分ごとの更新（petit-env の cron/petit.cron → run-for-each-character.sh desire）
 - `desire-status <id>`  … 今の欲求を短く出す（autonomous-action.sh がプロンプトに差し込む）。古ければ更新してから出す
+- `desire-act <id> <行動>...` … 行動（使った道具の名前・会話の 1 往復 `chat`）で欲求を少し満たす（actions.py）。
+  autonomous-action.sh が自律行動のあとに、家 API が会話の返事のあとに呼ぶ
 
 どちらもログに記憶の本文を出さない（出すのは欲求の値と、入力の件数だけ）。
 """
@@ -53,6 +55,21 @@ def status_main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def act_main(argv: list[str] | None = None) -> int:
+    logging.basicConfig(level=logging.WARNING, format="[desire-act] %(levelname)s %(message)s")
+    argv = sys.argv[1:] if argv is None else argv
+    _utf8_stdout()
+    if not argv:
+        print("[desire-act] 使い方: desire-act <id> <行動>...", file=sys.stderr)
+        return 2
+    svc = DesireService.from_env(argv[0])
+    row, hits = svc.act(argv[1:])
+    if hits:
+        levels = svc.levels(row)
+        print("[desire-act] " + " ".join(f"{n}={levels.get(n, 0):.3f}({','.join(g)})" for n, g in hits.items()))
+    return 0
+
+
 def _run(fn) -> None:
     sys.exit(fn())
 
@@ -63,3 +80,7 @@ def update() -> None:
 
 def status() -> None:
     _run(status_main)
+
+
+def act() -> None:
+    _run(act_main)

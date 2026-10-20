@@ -503,3 +503,45 @@ def test_desire_history_keeps_three_days(aws, monkeypatch):
     assert len(left) == 2 and not any("2000-01-01" in sk for sk in left)
     svc.update()
     assert svc.history_text(72).count("新しい") == 1 and "古い" not in svc.history_text(72)
+
+
+def test_actions_satisfy_desires_automatically(aws, monkeypatch):
+    """澪のリクエスト（2026-10-20）: 72 時間ずっと 1.00 だった。調べものや会話をしたら自動で下がる。"""
+    from petit_desire import cli
+
+    svc = _svc(aws, monkeypatch)
+    svc.update()
+    svc.nudge("curiosity", 1.0)
+    svc.nudge("miss_companion", 1.0)
+    row, hits = svc.act(["WebSearch", "mcp__house__book_read", "mcp__memory__remember"])
+    assert hits == {"curiosity": {"WebSearch": 1, "book_read": 1}}
+    assert svc.levels(row)["curiosity"] == pytest.approx(0.8)  # 満たし方 0.4 の 1/4 を 2 回
+    assert svc.levels(row)["miss_companion"] == pytest.approx(1.0)
+    # 1 回でまとめて下がるのは満たし方 1 回ぶんまで
+    row, _ = svc.act(["WebFetch"] * 10)
+    assert svc.levels(row)["curiosity"] == pytest.approx(0.4)
+    # 会話の 1 往復は会いたい（CLI から）
+    assert cli.act_main([PID, "chat"]) == 0
+    assert svc.levels(svc.store.read())["miss_companion"] == pytest.approx(0.9)
+    text = svc.history_text(24)
+    assert "行動で満たされた（WebSearch・book_read）: 1.00 → 0.80" in text
+    assert "行動で満たされた（会話の 1 往復）: 1.00 → 0.90" in text
+    # 何にも当たらない行動は書かない
+    assert svc.act(["Skill"]) == (None, {})
+    assert "WebSearch・WebFetch・book_read・body_glance・body_gaze をすると自動で −0.1" in svc.format(svc.store.read())
+
+
+def test_petit_decides_its_own_actions(aws, monkeypatch):
+    svc = _svc(aws, monkeypatch)
+    svc.update()
+    out = mcp_server.call_tool_sync("shape_desire", {
+        "desire_name": "ぷちたちと話したい", "satisfaction_hours": 12, "satisfy_amount": 0.4,
+        "actions": ["sns_comment", "board_post"], "level": 1.0})
+    assert out.startswith("[形] 新しい欲求を足した")
+    row, hits = svc.act(["mcp__petit-sns__sns_comment"])
+    assert hits == {"ぷちたちと話したい": {"sns_comment": 1}}
+    assert svc.levels(row)["ぷちたちと話したい"] == pytest.approx(0.9)
+    # 生まれつきの欲求の行動も置き換えられる（空にすれば自動では下がらない）
+    mcp_server.call_tool_sync("shape_desire", {"desire_name": "curiosity", "actions": []})
+    assert svc.act(["WebSearch"]) == (None, {})
+    assert "空白" in mcp_server.call_tool_sync("shape_desire", {"desire_name": "curiosity", "actions": ["Web Search"]})

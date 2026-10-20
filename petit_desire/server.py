@@ -172,6 +172,14 @@ async def list_tools() -> list[Tool]:
                         "type": "array", "items": {"type": "string"},
                         "description": "記憶（remember）にこの言葉があれば、満たされたと数える（例: 「確かめた」）",
                     },
+                    "actions": {
+                        "type": "array", "items": {"type": "string"},
+                        "description": ("この行動をしたら、自動で少し満たされたと数える（1 回で満たし方の 1/4。"
+                                        "1 回の自律行動・会話の返事でまとめて満たし方 1 回ぶんまで）。道具の名前"
+                                        "（WebSearch・WebFetch・book_read・body_glance・sns_comment・"
+                                        "board_post など）か、"
+                                        "会話で 1 往復したら chat。渡すと前の並びと置き換わる"),
+                    },
                     "level": {"type": "number", "description": "新しい欲求のいまの強さ（0〜1）。省けば 0.5"},
                 },
                 "required": ["desire_name"],
@@ -204,6 +212,7 @@ def call_tool_sync(name: str, arguments: dict[str, Any]) -> str:
     if name == "shape_desire":
         desire = str(arguments.get("desire_name", "")).strip()
         kws = arguments.get("keywords")
+        acts = arguments.get("actions")
         try:
             row, added = svc.shape(
                 desire,
@@ -213,6 +222,7 @@ def call_tool_sync(name: str, arguments: dict[str, Any]) -> str:
                 satisfy_amount=arguments.get("satisfy_amount"),
                 keywords=list(kws) if isinstance(kws, list) else None,
                 level=arguments.get("level"),
+                actions=list(acts) if isinstance(acts, list) else None,
             )
         except (ShapeError, ValueError, TypeError) as e:
             return f"形を決められなかった: {e}"
