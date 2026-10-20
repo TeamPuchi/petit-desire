@@ -26,6 +26,7 @@ dev = [
 desire-updater = "petit_desire.cli:update"
 desire-system = "petit_desire.server:main"
 desire-status = "petit_desire.cli:status"
+desire-act = "petit_desire.cli:act"
 
 [build-system]
 requires = ["hatchling"]

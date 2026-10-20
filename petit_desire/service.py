@@ -29,6 +29,7 @@ from typing import Any, Callable
 
 from desire_updater import DesireSystemConfig, parse_desire_config
 
+from .actions import ACTION_SHARE, CHAT, actions_of, count_actions, deltas_for, words_of
 from .defaults import DEFAULT_DESIRE_CONFIG
 from .engine import Inputs, iso, nudge, parse_time, step, utcnow
 from .history import DynamoHistory, changes_of, format_history
@@ -251,11 +252,41 @@ class DesireService:
         amount = max(0.0, min(BOOST_MAX, float(amount)))
         return self.nudge(name, amount), amount
 
+    def act(self, names: list[str]) -> tuple[dict[str, Any] | None, dict[str, dict[str, int]]]:
+        """行動（道具の名前・chat）で、その行動を持つ欲求を少し満たす（actions.py）。(行, 欲求ごとの効いた行動)。"""
+        counts = count_actions(names)
+        if not counts:
+            return None, {}
+        before = self.store.read()
+        deltas, hits = deltas_for(self.config_for(before), counts, satisfy_amount_of)
+        if not deltas:
+            return None, {}
+        now = utcnow()
+
+        def make(r: dict[str, Any] | None) -> dict[str, Any]:
+            row, cfg = r, self.config_for(r)
+            for name, delta in deltas.items():
+                if name in cfg.desires:
+                    row = nudge(row, cfg, name, delta, now, satisfied=True)
+            return row
+
+        row = self._commit(make)
+        old = dict((before or {}).get("desires") or {})
+        new = dict(row.get("desires") or {})
+
+        def log(h: DynamoHistory) -> None:
+            for name, got in hits.items():
+                h.add_event(f"行動で満たされた（{words_of(got)}）", changes_of(old, new, [name]), now)
+
+        self._log(log)
+        return row, hits
+
     # ── 形を変える（akatsuki-petit#106） ──
 
     def shape(self, name: str, *, name_ja: str | None = None, description: str | None = None,
               satisfaction_hours: float | None = None, satisfy_amount: float | None = None,
-              keywords: list[str] | None = None, level: float | None = None) -> tuple[dict[str, Any], bool]:
+              keywords: list[str] | None = None, level: float | None = None,
+              actions: list[str] | None = None) -> tuple[dict[str, Any], bool]:
         """欲求を足す（無い名前）か、形を変える（ある名前）。(行, 新しく足したか)。
 
         新しい欲求は level（省けば initial_level）から始まり、次の更新から時間で満ちていく。
@@ -263,7 +294,7 @@ class DesireService:
         """
         name = check_name(name)
         spec = new_spec(name_ja=name_ja, description=description, satisfaction_hours=satisfaction_hours,
-                        satisfy_amount=satisfy_amount, keywords=keywords)
+                        satisfy_amount=satisfy_amount, keywords=keywords, actions=actions)
         now = utcnow()
         added = {"v": False}
 
@@ -368,7 +399,10 @@ class DesireService:
             how = ""
             if not compact:
                 own = "・自分で決めた形" if k in mine else ""
-                how = f"（満たすと −{satisfy_amount_of(d):g}・0→1 まで {d.satisfaction_hours:g} 時間{own}）"
+                acts = actions_of(k, d)
+                act = ("・" + "・".join("会話" if a == CHAT else a for a in acts)
+                       + f" をすると自動で −{satisfy_amount_of(d) * ACTION_SHARE:g}") if acts else ""
+                how = f"（満たすと −{satisfy_amount_of(d):g}・0→1 まで {d.satisfaction_hours:g} 時間{act}{own}）"
             unread = ""
             if touch_unread and _is_nade(k, labels.get(k, "")):
                 unread = f"（まだ読んでいない、触られた・撫でられた {touch_unread} 回。house の body_since で読むと受け取れる）"
