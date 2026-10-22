@@ -37,6 +37,15 @@ MAX_DESIRES = 12  # 欲求の数の上限（生まれつきのものも含む）
 DEFAULT_SATISFY = 0.4  # 元の server.py と同じ
 
 
+def _body_driven(name: str, d: DesireConfig) -> bool:
+    from .engine import is_body_driven
+
+    return is_body_driven(name, d)
+
+
+BODY_DRIVEN_WORDS = "は体が決める欲求なので、自分では変えられない（体が眠っている間に下がり、起きている間に上がる）"
+
+
 class ShapeError(ValueError):
     """ぷちに返す理由（日本語）。"""
 
@@ -63,6 +72,8 @@ def apply_shape(config: DesireSystemConfig, shape: dict[str, dict[str, Any]] | N
     desires = dict(config.desires)
     priority = list(config.priority)
     for name, spec in shape.items():
+        if name in desires and _body_driven(name, desires[name]):
+            continue  # 体が決める欲求（眠い）は、ぷちが前に決めた形・手放しも効かせない（2026-10-22）
         if spec.get("retired"):
             desires.pop(name, None)
             continue

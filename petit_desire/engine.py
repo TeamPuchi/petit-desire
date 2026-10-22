@@ -174,6 +174,22 @@ def apply_cross_effects(desires: dict[str, float], config: DesireSystemConfig) -
 # ── 本体 ──────────────────────────────
 
 
+# 名前が sleepy なら、キャラの desire_config.json に書いていなくても体が決める・眠ると 8 時間で下がる（2026-10-22）
+SLEEPY = "sleepy"
+SLEEPY_SLEEP_HOURS = 8.0
+
+
+def is_body_driven(name: str, d: Any) -> bool:
+    return bool(getattr(d, "body_driven", False)) or name == SLEEPY
+
+
+def sleep_hours_of(name: str, d: Any) -> float | None:
+    h = getattr(d, "sleep_hours", None)
+    if h:
+        return float(h)
+    return SLEEPY_SLEEP_HOURS if name == SLEEPY else None
+
+
 def step(
     row: dict[str, Any] | None,
     config: DesireSystemConfig,
@@ -208,6 +224,7 @@ def step(
             if name not in latest_mem or ev.at > latest_mem[name]:
                 latest_mem[name] = ev.at
 
+    asleep = (inputs.sensors or {}).get("sleeping") in (1, True)
     raw: dict[str, float] = {}
     for name, d in config.desires.items():
         hours = d.satisfaction_hours if d.satisfaction_hours > 0 else 1.0
@@ -216,8 +233,10 @@ def step(
             raw[name] = _clamp(d.base_level if d.base_level is not None else 0.0)
             continue
 
+        body = is_body_driven(name, d)
+        sleep_h = sleep_hours_of(name, d)
         mem_level = None
-        if name in latest_mem:
+        if name in latest_mem and not body:
             mem_level = max(0.0, (now - latest_mem[name]).total_seconds() / 3600) / hours
             prev_sat = parse_time(satisfied_at.get(name))
             if prev_sat is None or latest_mem[name] > prev_sat:
@@ -228,7 +247,8 @@ def step(
             # 他の書き手（家 API のタッチ・satisfy_desire・boost_desire）が動かした分を取り込む
             if name in current and name in prev_written:
                 level += current[name] - prev_written[name]
-            level += gap_h / hours
+            # 体が眠っている間は下がる（眠い。2026-10-22）。眠っているかは、いま読んだ機体の状態で見る（5 分ごと）
+            level += -gap_h / sleep_h if sleep_h and asleep else gap_h / hours
             if mem_level is not None:
                 level = min(level, mem_level)
         elif name in current:

@@ -31,9 +31,18 @@ from desire_updater import DesireSystemConfig, parse_desire_config
 
 from .actions import ACTION_SHARE, CHAT, actions_of, count_actions, deltas_for, words_of
 from .defaults import DEFAULT_DESIRE_CONFIG
-from .engine import Inputs, iso, nudge, parse_time, step, utcnow
+from .engine import Inputs, is_body_driven, iso, nudge, parse_time, step, utcnow
 from .history import KEEP_DAYS, DynamoHistory, changes_of, format_history
-from .shape import MAX_DESIRES, ShapeError, apply_shape, check_name, new_spec, satisfy_amount_of, shape_of
+from .shape import (
+    BODY_DRIVEN_WORDS,
+    MAX_DESIRES,
+    ShapeError,
+    apply_shape,
+    check_name,
+    new_spec,
+    satisfy_amount_of,
+    shape_of,
+)
 from .store import DynamoRowStore, FileRowStore, RowStore, region_from_env
 
 logger = logging.getLogger("petit-desire")
@@ -247,14 +256,22 @@ class DesireService:
         cfg = self.config_for(row if row is not None else self.store.read())
         return satisfy_amount_of(cfg.desires[name]) if name in cfg.desires else SATISFY_AMOUNT
 
+    def check_not_body_driven(self, name: str, row: dict[str, Any] | None = None) -> None:
+        """体が決める欲求（眠い）は、ぷち自身の道具では動かさない（2026-10-22 なぎさん）。"""
+        cfg = self.config_for(row if row is not None else self.store.read())
+        if name in cfg.desires and is_body_driven(name, cfg.desires[name]):
+            raise ShapeError(f"「{cfg.desires[name].name_ja}」{BODY_DRIVEN_WORDS}")
+
     def satisfy(self, name: str, amount: float | None = None) -> dict[str, Any]:
         """満たす。amount を省けば、その欲求の満たし方（satisfy_amount、無ければ 0.4）だけ下げる。"""
+        self.check_not_body_driven(name)
         if amount is None:
             amount = self.satisfy_amount(name)
         amount = max(0.0, min(1.0, float(amount)))
         return self.nudge(name, -amount, satisfied=True)
 
     def boost(self, name: str, amount: float) -> tuple[dict[str, Any], float]:
+        self.check_not_body_driven(name)
         amount = max(0.0, min(BOOST_MAX, float(amount)))
         return self.nudge(name, amount), amount
 
@@ -264,7 +281,10 @@ class DesireService:
         if not counts:
             return None, {}
         before = self.store.read()
-        deltas, hits = deltas_for(self.config_for(before), counts, satisfy_amount_of)
+        cfg0 = self.config_for(before)
+        deltas, hits = deltas_for(cfg0, counts, satisfy_amount_of)
+        deltas = {k: v for k, v in deltas.items() if k in cfg0.desires and not is_body_driven(k, cfg0.desires[k])}
+        hits = {k: v for k, v in hits.items() if k in deltas}
         if not deltas:
             return None, {}
         now = utcnow()
@@ -308,6 +328,7 @@ class DesireService:
             row = dict(r or {})
             shape = shape_of(row)
             cfg = self.config_for(row)
+            self.check_not_body_driven(name, row)
             is_new = name not in cfg.desires
             if is_new and len(cfg.desires) >= MAX_DESIRES:
                 raise ShapeError(f"欲求は {MAX_DESIRES} 個まで。足すなら、どれかを retire_desire で手放してから")
@@ -339,6 +360,7 @@ class DesireService:
             row = dict(r or {})
             if name not in self.config_for(row).desires:
                 raise ShapeError(f"「{name}」という欲求は無い")
+            self.check_not_body_driven(name, row)
             shape = shape_of(row)
             shape[name] = {"retired": True, "by": "petit", "at": iso(now)}
             row["shape"] = shape

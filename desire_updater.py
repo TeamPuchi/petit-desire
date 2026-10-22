@@ -65,6 +65,10 @@ class DesireConfig:
     categories: list[str] = field(default_factory=list)
     # クラウド版: satisfy_desire 1 回で下がる量（無ければ 0.4。akatsuki-petit#106）
     satisfy_amount: float | None = None
+    # クラウド版: 体が眠っている間（機体の sleeping=1）は、この時間で 1 から 0 まで下がる（眠い。2026-10-22 なぎさん）
+    sleep_hours: float | None = None
+    # クラウド版: 体が決める欲求。ぷち自身（shape・retire・satisfy・boost・記憶のキーワード）では動かさない
+    body_driven: bool = False
 
 
 @dataclass
@@ -133,6 +137,8 @@ def parse_desire_config(raw: dict[str, Any], companion_name: str | None = None) 
             time_driven=d.get("time_driven", True),
             categories=list(d.get("categories", [])),
             satisfy_amount=(float(d["satisfy_amount"]) if d.get("satisfy_amount") is not None else None),
+            sleep_hours=(float(d["sleep_hours"]) if d.get("sleep_hours") is not None else None),
+            body_driven=bool(d.get("body_driven", False)),
         )
 
     sensor_effects = [

@@ -7,12 +7,12 @@
 - satisfaction_hours（満タンまでの時間）: README の例は 知りたい 2 時間・会いたい 3 時間だったが、なぎさん 2026-09-29
   「夜の欲求は長くしておいて」で 知りたい 4 時間・会いたい 6 時間に（akatsuki-petit#157）。計算の仕組みは元のまま。
   embodied-claude の create_character.py の雛形は 何か調べたい 6 時間・会いたい 4 時間
-- sleepy（眠い）: akatsuki-petit#186。家（PetitOnes）のぷちは、眠いときに自分で体をスリープにして、記憶に
-  「スリープした」と残す。説明とキーワード（スリープ・眠った・寝た）は家の desire_config に合わせた（#186 の記述）。
-  satisfaction_hours は 16（なぎさん 2026-10-02「人と同じように 1 日 1 日で眠って、起きて、活動してほしい。30 時間は
-  長すぎ」。家の値は公開リポジトリに無く、ありさんに確認中）。クラウドでは **起きたときに家 API が眠いを 0 に戻す**
-  （petit-api iot_bridge の desire_rules `wake`）ので、眠いは「起きてからの時間 ÷ 16」で満ちる: 起きて 11 時間ほどで
-  0.7 を超え、16 時間で満タン（朝 7 時に起きたら、夕方 6 時すぎから眠くなり、夜 11 時に満タン）。
+- sleepy（眠い）: akatsuki-petit#186。起きている間は 16 時間で満ちる
+  （なぎさん 2026-10-02「人と同じように 1 日 1 日で眠って、起きて、活動してほしい」）。
+  2026-10-22 なぎさん: 体が眠っている間（機体の sleeping=1）は 8 時間で 1 から 0 まで下がる
+  （人の眠気と同じ。寝た長さぶん下がり、起きたらそこからまた上がる）。前は「起きたときに家 API が 0 に戻す」だったが、
+  ずっと寝ていても下がらないのでやめた。眠いは体が決める欲求（body_driven）で、ぷち自身の shape_desire・retire_desire・
+  satisfy_desire・boost_desire・記憶のキーワードでは動かない（「意識が自分で眠気の決まりを変えるのは変」）。
   体を眠らせるのは house の body_sleep（petit-api）
 
 キャラごとに `$PETIT_DATA_DIR/characters/<id>/config/desire_config.json` を置けば、そちらが優先される。
@@ -44,7 +44,9 @@ DEFAULT_DESIRE_CONFIG: dict[str, Any] = {
             "name_ja": "眠い",
             "description": "体（机の上の機体）をスリープさせて眠りたい",
             "satisfaction_hours": 16.0,
-            "keywords": ["スリープ", "眠った", "寝た"],
+            "sleep_hours": 8.0,
+            "body_driven": True,
+            "keywords": [],
             "color": "#8e7cc3",
         },
     },
