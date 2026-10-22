@@ -614,3 +614,21 @@ def test_week_long_flow_is_thinned_and_dated():
     flow = format_history(snaps, [], {"curiosity": "知りたい"}, {"curiosity": 0.4}, 168).split("流れ:")[1]
     flow = flow.splitlines()[0]
     assert 20 <= flow.count("→") <= 26 and "/" in flow.split("→")[0]
+
+
+def test_petit_cannot_move_sleepy_itself(aws):
+    """眠いは体が決める欲求（2026-10-22 なぎさん「意識が自分で変更するのは変」）。ぷちの道具では動かせない。"""
+    from petit_desire.shape import ShapeError
+
+    svc = DesireService.from_env(PID, _env(aws))
+    svc.update()
+    for call in (lambda: svc.satisfy("sleepy"), lambda: svc.boost("sleepy", 0.2), lambda: svc.retire("sleepy"),
+                 lambda: svc.shape("sleepy", name_ja=None, description=None, satisfaction_hours=2,
+                                   satisfy_amount=None, keywords=None)):
+        with pytest.raises(ShapeError, match="体が決める"):
+            call()
+    # 前に決めた形があっても効かせない
+    aws["table"].update_item(Key={"pk": f"P#{PID}", "sk": "STATE#DESIRES"},
+                             UpdateExpression="SET #s = :s", ExpressionAttributeNames={"#s": "shape"},
+                             ExpressionAttributeValues={":s": {"sleepy": {"satisfaction_hours": 2}}})
+    assert svc.config_for(svc.store.read()).desires["sleepy"].satisfaction_hours == 16.0

@@ -245,6 +245,10 @@ def call_tool_sync(name: str, arguments: dict[str, Any]) -> str:
         if desire not in cfg.desires:
             return f"欲求名が不正: {desire}. 有効: {list(cfg.desires)}（新しい欲求は shape_desire で足せる）"
         label = cfg.desires[desire].name_ja
+        try:
+            svc.check_not_body_driven(desire)
+        except ShapeError as e:
+            return str(e)
         if name == "satisfy_desire":
             amount = arguments.get("amount")
             amount = svc.satisfy_amount(desire) if amount is None else max(SATISFY_MIN, min(1.0, float(amount)))

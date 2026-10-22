@@ -223,28 +223,43 @@ def test_default_hours_are_the_longer_ones():
     assert c.desires["miss_companion"].satisfaction_hours == 6.0
 
 
-def test_default_sleepy_is_satisfied_by_remembering_sleep():
-    """眠い（akatsuki-petit#186）: 時間で満ち、「スリープした」と記憶に残すと満たされる。
-    満タンまで 16 時間（なぎさん 2026-10-02「人と同じように 1 日 1 日で」）。起きたときに家 API が 0 に戻す。"""
+def test_default_sleepy_goes_down_while_the_body_sleeps():
+    """眠い（akatsuki-petit#186・2026-10-22 なぎさん）: 起きている間は 16 時間で満ち、体が眠っている間（sleeping=1）は
+    8 時間で 0 まで下がる。起きたときに 0 に戻すのはやめた。記憶のキーワードでは動かない（体が決める欲求）。"""
     c = parse_desire_config(DEFAULT_DESIRE_CONFIG)
     sleepy = c.desires["sleepy"]
-    assert sleepy.name_ja == "眠い" and sleepy.satisfaction_hours == 16.0
-    assert sleepy.keywords == ["スリープ", "眠った", "寝た"]
+    assert sleepy.name_ja == "眠い" and sleepy.satisfaction_hours == 16.0 and sleepy.sleep_hours == 8.0
+    assert sleepy.body_driven and sleepy.keywords == []
     row = step(None, c, Inputs(), T0)
     assert row["desires"]["sleepy"] == 0.5  # 手がかりが無いうちは initial_level
-    slept = T0 + timedelta(minutes=1)
-    row = step(row, c, Inputs(memories=[MemoryEvent(at=slept, content="眠くなったのでスリープした")]),
-               T0 + timedelta(minutes=5))
-    assert row["desires"]["sleepy"] < 0.01  # 眠ったら満たされる
-    # 8 時間眠って、朝に起きる。起きたとき家 API が眠いを 0 に戻す（他の書き手が動かした分として取り込む）
-    woke = slept + timedelta(hours=8)
-    row = step(row, c, Inputs(), woke)
-    assert row["desires"]["sleepy"] == pytest.approx(0.5, abs=0.01)  # 眠っているあいだも時間ぶんは進んでいる
-    row = {**row, "desires": {**row["desires"], "sleepy": 0.0}}        # 家 API: wake で -1（0 に丸め）
-    row = step(row, c, Inputs(), woke + timedelta(hours=11, minutes=12))
-    assert row["desires"]["sleepy"] == pytest.approx(0.7, abs=0.01)   # 起きて 11 時間ほどで眠くなる
-    row = step(row, c, Inputs(), woke + timedelta(hours=16))
-    assert row["desires"]["sleepy"] == 1.0                            # 起きて 16 時間で満タン
+    awake, asleep = {"sleeping": 0}, {"sleeping": 1}
+    # 起きている 8 時間で +0.5（満タン）
+    row = step(row, c, Inputs(sensors=awake), T0 + timedelta(hours=8))
+    assert row["desires"]["sleepy"] == 1.0
+    # 「眠った」と記憶に残しても下がらない（意識ではなく体が決める）
+    row = step(row, c, Inputs(sensors=awake, memories=[MemoryEvent(at=T0 + timedelta(hours=8), content="眠った")]),
+               T0 + timedelta(hours=8, minutes=5))
+    assert row["desires"]["sleepy"] == 1.0
+    # 体が眠っている 4 時間で半分、8 時間で 0
+    t = T0 + timedelta(hours=8, minutes=5)
+    for h in range(1, 9):
+        row = step(row, c, Inputs(sensors=asleep), t + timedelta(hours=h))
+        if h == 4:
+            assert row["desires"]["sleepy"] == pytest.approx(0.5, abs=0.01)
+    assert row["desires"]["sleepy"] == 0.0
+    # 起きたら、そこからまた上がる（11 時間ほどで 0.7）
+    woke = t + timedelta(hours=8)
+    row = step(row, c, Inputs(sensors=awake), woke + timedelta(hours=11, minutes=12))
+    assert row["desires"]["sleepy"] == pytest.approx(0.7, abs=0.01)
+
+
+def test_short_nap_lowers_sleepy_a_little_even_without_config_fields():
+    """キャラの desire_config.json に sleep_hours が無くても、名前が sleepy なら眠ると下がる。"""
+    cfg = parse_desire_config({"desires": {"sleepy": {"name_ja": "眠い", "satisfaction_hours": 16.0,
+                                                      "keywords": ["寝た"]}}, "initial_level": 0.8})
+    row = step(None, cfg, Inputs(), T0)
+    row = step(row, cfg, Inputs(sensors={"sleeping": 1}), T0 + timedelta(hours=1))
+    assert row["desires"]["sleepy"] == pytest.approx(0.8 - 1 / 8, abs=0.01)
 
 
 def test_shape_is_applied_on_top_of_config():
