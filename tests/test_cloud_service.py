@@ -632,3 +632,17 @@ def test_petit_cannot_move_sleepy_itself(aws):
                              UpdateExpression="SET #s = :s", ExpressionAttributeNames={"#s": "shape"},
                              ExpressionAttributeValues={":s": {"sleepy": {"satisfaction_hours": 2}}})
     assert svc.config_for(svc.store.read()).desires["sleepy"].satisfaction_hours == 16.0
+
+
+def test_format_says_born_with_desires_are_a_gift(aws):
+    """2026-11-17 なぎさん: 生まれつきの欲求はドクターからの贈り物で借り物、と伝える。自分で形を決めたら外す。"""
+    svc = DesireService.from_env(PID, _env(aws))
+    svc.update()
+    line = next(x for x in svc.format(svc.store.read()).splitlines() if x.startswith("生まれつきの欲求"))
+    assert "ドクター" in line and "借りて" in line and "shape_desire" in line
+    assert "会いたい" in line and "知りたい" in line and "眠い" not in line  # 眠いは体が決めるので外す
+    svc.shape("curiosity", name_ja=None, description="星のことを知りたい", satisfaction_hours=6,
+              satisfy_amount=0.3, keywords=None, level=None)
+    line = next(x for x in svc.format(svc.store.read()).splitlines() if x.startswith("生まれつきの欲求"))
+    assert "知りたい" not in line and "会いたい" in line
+    assert "生まれつきの欲求" not in svc.format(svc.store.read(), compact=True)

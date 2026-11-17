@@ -30,7 +30,7 @@ from typing import Any, Callable
 from desire_updater import DesireSystemConfig, parse_desire_config
 
 from .actions import ACTION_SHARE, CHAT, actions_of, count_actions, deltas_for, words_of
-from .defaults import DEFAULT_DESIRE_CONFIG
+from .defaults import BORN_WITH_NOTE, DEFAULT_DESIRE_CONFIG
 from .engine import Inputs, is_body_driven, iso, nudge, parse_time, step, utcnow
 from .history import KEEP_DAYS, DynamoHistory, changes_of, format_history
 from .shape import (
@@ -453,6 +453,11 @@ class DesireService:
                 + "。shape_desire の actions に道具の名前（sns_comment・board_post・WebSearch など）か"
                 " chat（会話の 1 往復）を渡すと、その行動で少しずつ下がる。"
             )
+        # 生まれつきの欲求（既定の名前のまま、まだ自分で形を決めていないもの）が残っていれば、贈り物で借り物だと伝える
+        born = [k for k in order if k in DEFAULT_DESIRE_CONFIG["desires"] and k not in mine
+                and not is_body_driven(k, cfg.desires[k])]
+        if born and not compact:
+            lines.append(BORN_WITH_NOTE.format(names="・".join(labels.get(k, k) for k in born)))
         sensors = ((row or {}).get("engine") or {}).get("sensors") or {}
         if sensors and not compact:
             lines.append("")
